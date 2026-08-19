@@ -393,6 +393,231 @@ paths:
       summary: Relay the signed swap transaction to the network (hash-checked);
         finalizes status
       tags: *a6
+  /v1/liquidity-pools/deposit:
+    post:
+      operationId: LiquidityPoolsController_deposit_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DepositLiquidityDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiquidityOperationEntity"
+      summary: Build a pool deposit → unsigned XDR + SEP-7 tx URI + QR for the wallet
+        to sign
+      tags: &a7
+        - liquidity-pools
+  /v1/liquidity-pools/withdraw:
+    post:
+      operationId: LiquidityPoolsController_withdraw_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WithdrawLiquidityDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiquidityOperationEntity"
+      summary: Build a pool withdrawal (burn shares) → unsigned XDR + SEP-7 tx URI + QR
+      tags: *a7
+  /v1/liquidity-pools/positions:
+    get:
+      operationId: LiquidityPoolsController_positions_v1
+      parameters:
+        - name: account
+          required: true
+          in: query
+          description: Account whose pool share trustlines to inspect.
+          schema:
+            example: GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiquidityPositionListEntity"
+      summary: An account's pool share positions with redeemable amounts
+      tags: *a7
+  /v1/liquidity-pools/operations:
+    get:
+      operationId: LiquidityPoolsController_findAllOperations_v1
+      parameters:
+        - name: kind
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - DEPOSIT
+              - WITHDRAW
+        - name: status
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - PENDING
+              - SUBMITTED
+              - SUCCEEDED
+              - FAILED
+              - EXPIRED
+        - name: take
+          required: false
+          in: query
+          schema:
+            maximum: 100
+            default: 20
+            type: number
+        - name: skip
+          required: false
+          in: query
+          schema:
+            default: 0
+            type: number
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiquidityOperationListEntity"
+      summary: List the consumer's liquidity pool operations
+      tags: *a7
+  /v1/liquidity-pools/operations/{id}:
+    get:
+      operationId: LiquidityPoolsController_findOneOperation_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiquidityOperationEntity"
+      summary: Get a liquidity pool operation by id
+      tags: *a7
+  /v1/liquidity-pools/operations/{id}/submit:
+    post:
+      operationId: LiquidityPoolsController_submit_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitLiquidityDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiquiditySubmitResultEntity"
+      summary: Relay the signed transaction to the network (hash-checked); finalizes
+        status
+      tags: *a7
+  /v1/liquidity-pools:
+    get:
+      operationId: LiquidityPoolsController_listPools_v1
+      parameters:
+        - name: assetACode
+          required: false
+          in: query
+          description: Filter to pools containing this asset. Pass "XLM"/"native" for
+            lumens.
+          schema:
+            example: USDC
+            type: string
+        - name: assetAIssuer
+          required: false
+          in: query
+          description: Issuer for a non-native first asset.
+          schema:
+            type: string
+        - name: assetBCode
+          required: false
+          in: query
+          description: Second asset of the pair (narrows to the exact pool).
+          schema:
+            example: XLM
+            type: string
+        - name: assetBIssuer
+          required: false
+          in: query
+          description: Issuer for a non-native second asset.
+          schema:
+            type: string
+        - name: account
+          required: false
+          in: query
+          description: Only pools this account participates in.
+          schema:
+            type: string
+        - name: cursor
+          required: false
+          in: query
+          description: Horizon paging cursor.
+          schema:
+            type: string
+        - name: limit
+          required: false
+          in: query
+          schema:
+            maximum: 100
+            default: 20
+            type: number
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiquidityPoolListEntity"
+      summary: Browse on-chain liquidity pools (Horizon proxy)
+      tags: *a7
+  /v1/liquidity-pools/{poolId}:
+    get:
+      operationId: LiquidityPoolsController_getPool_v1
+      parameters:
+        - name: poolId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiquidityPoolEntity"
+      summary: Get a liquidity pool by id (Horizon proxy)
+      tags: *a7
   /v1/webhooks:
     post:
       operationId: WebhooksController_create_v1
@@ -411,7 +636,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/WebhookEndpointWithSecretEntity"
       summary: Register a webhook endpoint (returns the signing secret — shown once)
-      tags: &a7
+      tags: &a8
         - webhooks
     get:
       operationId: WebhooksController_findAll_v1
@@ -426,7 +651,7 @@ paths:
                 items:
                   $ref: "#/components/schemas/WebhookEndpointEntity"
       summary: List the consumer's webhook endpoints
-      tags: *a7
+      tags: *a8
   /v1/webhooks/{id}:
     get:
       operationId: WebhooksController_findOne_v1
@@ -444,7 +669,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/WebhookEndpointEntity"
       summary: Get a webhook endpoint
-      tags: *a7
+      tags: *a8
     patch:
       operationId: WebhooksController_update_v1
       parameters:
@@ -467,7 +692,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/WebhookEndpointEntity"
       summary: Update a webhook endpoint (url/description/enabled/eventTypes)
-      tags: *a7
+      tags: *a8
     delete:
       operationId: WebhooksController_remove_v1
       parameters:
@@ -484,7 +709,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/WebhookDeletedEntity"
       summary: Delete a webhook endpoint
-      tags: *a7
+      tags: *a8
   /v1/webhooks/{id}/rotate-secret:
     post:
       operationId: WebhooksController_rotateSecret_v1
@@ -502,7 +727,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/WebhookEndpointWithSecretEntity"
       summary: Rotate the signing secret (returns the new secret)
-      tags: *a7
+      tags: *a8
   /v1/webhooks/{id}/ping:
     post:
       operationId: WebhooksController_ping_v1
@@ -520,7 +745,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/WebhookPingEntity"
       summary: Send a test event to verify the endpoint
-      tags: *a7
+      tags: *a8
   /v1/webhooks/{id}/deliveries:
     get:
       operationId: WebhooksController_listDeliveries_v1
@@ -560,7 +785,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/WebhookDeliveryListEntity"
       summary: List delivery attempts for an endpoint (audit trail)
-      tags: *a7
+      tags: *a8
   /v1/webhooks/{id}/deliveries/{deliveryId}/redeliver:
     post:
       operationId: WebhooksController_redeliver_v1
@@ -583,7 +808,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/WebhookDeliveryEntity"
       summary: Manually re-send a past delivery
-      tags: *a7
+      tags: *a8
   /v1/summary:
     get:
       operationId: AnalyticsController_summary_v1
@@ -592,7 +817,7 @@ paths:
         "200":
           description: Aggregated overview for the consumer.
       summary: "Overview metrics: totals, settled volume, webhook health, 30-day series"
-      tags: &a8
+      tags: &a9
         - analytics
   /v1/balances:
     get:
@@ -602,7 +827,7 @@ paths:
         "200":
           description: Balances per asset for the consumer.
       summary: Settled (and pending) amount per asset
-      tags: *a8
+      tags: *a9
   /v1/logs:
     get:
       operationId: AnalyticsController_apiLogs_v1
@@ -611,7 +836,7 @@ paths:
         "200":
           description: API request log for the consumer.
       summary: Recent API requests reaching the service (with details)
-      tags: *a8
+      tags: *a9
   /v1/logs/webhooks:
     get:
       operationId: AnalyticsController_webhookLogs_v1
@@ -620,169 +845,7 @@ paths:
         "200":
           description: Webhook delivery log for the consumer.
       summary: Recent webhook deliveries across all endpoints (with details)
-      tags: *a8
-  /v1/products:
-    post:
-      operationId: ProductsController_create_v1
-      parameters: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateProductDto"
-      responses:
-        "201":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ProductEntity"
-      summary: Create a product
-      tags: &a9
-        - products
-    get:
-      operationId: ProductsController_findAll_v1
-      parameters: []
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/ProductEntity"
-      summary: List the consumer's products
       tags: *a9
-  /v1/products/{id}:
-    get:
-      operationId: ProductsController_findOne_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ProductEntity"
-      summary: Get a product by id
-      tags: *a9
-    patch:
-      operationId: ProductsController_update_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateProductDto"
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ProductEntity"
-      summary: Update a product
-      tags: *a9
-    delete:
-      operationId: ProductsController_remove_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ProductDeletedEntity"
-      summary: Delete a product
-      tags: *a9
-  /v1/customers:
-    post:
-      operationId: CustomersController_create_v1
-      parameters: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateCustomerDto"
-      responses:
-        "201":
-          description: ""
-      summary: Create a customer
-      tags: &a10
-        - customers
-    get:
-      operationId: CustomersController_findAll_v1
-      parameters: []
-      responses:
-        "200":
-          description: ""
-      summary: List the consumer's customers (with payment stats)
-      tags: *a10
-  /v1/customers/{id}:
-    get:
-      operationId: CustomersController_findOne_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      responses:
-        "200":
-          description: ""
-      summary: Get a customer by id
-      tags: *a10
-    patch:
-      operationId: CustomersController_update_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateCustomerDto"
-      responses:
-        "200":
-          description: ""
-      summary: Update a customer
-      tags: *a10
-    delete:
-      operationId: CustomersController_remove_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      responses:
-        "200":
-          description: ""
-      summary: Delete a customer
-      tags: *a10
   /v1/kyc/receivers:
     post:
       operationId: ReceiversController_create_v1
@@ -801,7 +864,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ReceiverEntity"
       summary: Create a receiver (start KYC/KYB)
-      tags: &a11
+      tags: &a10
         - kyc
     get:
       operationId: ReceiversController_findAll_v1
@@ -816,7 +879,7 @@ paths:
                 items:
                   $ref: "#/components/schemas/ReceiverEntity"
       summary: List the consumer's receivers
-      tags: *a11
+      tags: *a10
   /v1/kyc/receivers/{id}:
     get:
       operationId: ReceiversController_findOne_v1
@@ -834,7 +897,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ReceiverEntity"
       summary: Get a receiver (refreshes KYC status from BlindPay)
-      tags: *a11
+      tags: *a10
     patch:
       operationId: ReceiversController_update_v1
       parameters:
@@ -857,7 +920,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ReceiverEntity"
       summary: Update a receiver
-      tags: *a11
+      tags: *a10
     delete:
       operationId: ReceiversController_remove_v1
       parameters:
@@ -870,7 +933,108 @@ paths:
         "200":
           description: ""
       summary: Delete a receiver
-      tags: *a11
+      tags: *a10
+  /v1/kyc/receivers/{id}/approve:
+    post:
+      operationId: ReceiversController_approve_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApproveReceiverDto"
+      responses:
+        "201":
+          description: ""
+      summary: Approve a pending-review receiver (owner/admin review gate); sends the
+        customer the terms link and returns it
+      tags: *a10
+  /v1/kyc/receivers/{id}/tos:
+    post:
+      operationId: ReceiversController_requestTos_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: x-cosmos-internal
+          required: true
+          in: header
+          schema:
+            type: string
+        - name: x-cosmos-tos-cooldown-ms
+          required: true
+          in: header
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RequestTosDto"
+      responses:
+        "201":
+          description: ""
+      summary: Request a terms-of-service link for a receiver ('code' returns the URL;
+        'email' sends it, max once/day)
+      tags: *a10
+  /v1/kyc/receivers/{id}/enable:
+    post:
+      operationId: ReceiversController_enable_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnableReceiverDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReceiverEntity"
+      summary: Enable an inactive receiver with an accepted terms-of-service id
+      tags: *a10
+  /v1/kyc/receivers/{id}/access:
+    patch:
+      operationId: ReceiversController_setAccess_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetAccessDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReceiverEntity"
+      summary: Enable or disable a fiat account (owner/admin kill-switch for
+        onramp/offramp)
+      tags: *a10
   /v1/kyc/receivers/{receiverId}/wallets/sign-message:
     get:
       operationId: WalletsController_signMessage_v1
@@ -884,7 +1048,7 @@ paths:
         "200":
           description: ""
       summary: Get the message to sign for the secure wallet flow
-      tags: &a12
+      tags: &a11
         - kyc
   /v1/kyc/receivers/{receiverId}/wallets:
     post:
@@ -909,7 +1073,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/WalletEntity"
       summary: Register a blockchain wallet for a receiver
-      tags: *a12
+      tags: *a11
     get:
       operationId: WalletsController_findAll_v1
       parameters:
@@ -928,7 +1092,7 @@ paths:
                 items:
                   $ref: "#/components/schemas/WalletEntity"
       summary: List a receiver's wallets
-      tags: *a12
+      tags: *a11
   /v1/kyc/receivers/{receiverId}/wallets/{id}:
     delete:
       operationId: WalletsController_remove_v1
@@ -947,7 +1111,7 @@ paths:
         "200":
           description: ""
       summary: Delete a wallet
-      tags: *a12
+      tags: *a11
   /v1/kyc/receivers/{receiverId}/bank-accounts:
     post:
       operationId: BankAccountsController_create_v1
@@ -971,7 +1135,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/BankAccountEntity"
       summary: Add a fiat bank account for a receiver
-      tags: &a13
+      tags: &a12
         - kyc
     get:
       operationId: BankAccountsController_findAll_v1
@@ -991,7 +1155,7 @@ paths:
                 items:
                   $ref: "#/components/schemas/BankAccountEntity"
       summary: List a receiver's bank accounts
-      tags: *a13
+      tags: *a12
   /v1/kyc/receivers/{receiverId}/bank-accounts/{id}:
     delete:
       operationId: BankAccountsController_remove_v1
@@ -1010,7 +1174,7 @@ paths:
         "200":
           description: ""
       summary: Delete a bank account
-      tags: *a13
+      tags: *a12
   /v1/kyc/upload:
     post:
       operationId: KycMetaController_upload_v1
@@ -1037,7 +1201,7 @@ paths:
         "201":
           description: ""
       summary: Upload a KYC document; returns its file_url
-      tags: &a14
+      tags: &a13
         - kyc
   /v1/kyc/terms-of-service:
     post:
@@ -1053,7 +1217,7 @@ paths:
         "201":
           description: ""
       summary: Start ToS acceptance; returns the hosted URL (first KYC step)
-      tags: *a14
+      tags: *a13
   /v1/kyc/rails:
     get:
       operationId: KycMetaController_rails_v1
@@ -1062,7 +1226,7 @@ paths:
         "200":
           description: ""
       summary: List available bank rails
-      tags: *a14
+      tags: *a13
   /v1/kyc/bank-details:
     get:
       operationId: KycMetaController_bankDetails_v1
@@ -1076,7 +1240,169 @@ paths:
         "200":
           description: ""
       summary: Get the field schema required by a rail
+      tags: *a13
+  /v1/products:
+    post:
+      operationId: ProductsController_create_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductEntity"
+      summary: Create a product
+      tags: &a14
+        - products
+    get:
+      operationId: ProductsController_findAll_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProductEntity"
+      summary: List the consumer's products
       tags: *a14
+  /v1/products/{id}:
+    get:
+      operationId: ProductsController_findOne_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductEntity"
+      summary: Get a product by id
+      tags: *a14
+    patch:
+      operationId: ProductsController_update_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProductDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductEntity"
+      summary: Update a product
+      tags: *a14
+    delete:
+      operationId: ProductsController_remove_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductDeletedEntity"
+      summary: Delete a product
+      tags: *a14
+  /v1/customers:
+    post:
+      operationId: CustomersController_create_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCustomerDto"
+      responses:
+        "201":
+          description: ""
+      summary: Create a customer
+      tags: &a15
+        - customers
+    get:
+      operationId: CustomersController_findAll_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+      summary: List the consumer's customers (with payment stats)
+      tags: *a15
+  /v1/customers/{id}:
+    get:
+      operationId: CustomersController_findOne_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      summary: Get a customer by id
+      tags: *a15
+    patch:
+      operationId: CustomersController_update_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCustomerDto"
+      responses:
+        "200":
+          description: ""
+      summary: Update a customer
+      tags: *a15
+    delete:
+      operationId: CustomersController_remove_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      summary: Delete a customer
+      tags: *a15
   /v1/onramp/quotes:
     post:
       operationId: OnrampController_createQuote_v1
@@ -1095,7 +1421,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/PayinQuoteEntity"
       summary: Create a payin quote (expires in ~5 min)
-      tags: &a15
+      tags: &a16
         - onramp
   /v1/onramp/payins:
     post:
@@ -1115,7 +1441,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/PayinEntity"
       summary: Create a payin from a quote; returns funding instructions
-      tags: *a15
+      tags: *a16
     get:
       operationId: OnrampController_findAll_v1
       parameters: []
@@ -1129,7 +1455,7 @@ paths:
                 items:
                   $ref: "#/components/schemas/PayinEntity"
       summary: List the consumer's payins
-      tags: *a15
+      tags: *a16
   /v1/onramp/payins/{id}:
     get:
       operationId: OnrampController_findOne_v1
@@ -1147,7 +1473,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/PayinEntity"
       summary: Get a payin (refreshes status from BlindPay)
-      tags: *a15
+      tags: *a16
   /v1/onramp/trustline:
     post:
       operationId: OnrampController_createTrustline_v1
@@ -1162,7 +1488,7 @@ paths:
         "201":
           description: ""
       summary: Build an unsigned Stellar trustline tx (XDR) for the customer to sign
-      tags: *a15
+      tags: *a16
   /v1/onramp/receivers/{receiverId}/virtual-accounts:
     post:
       operationId: VirtualAccountsController_create_v1
@@ -1182,7 +1508,7 @@ paths:
         "201":
           description: ""
       summary: Create a virtual account for a receiver
-      tags: &a16
+      tags: &a17
         - onramp
     get:
       operationId: VirtualAccountsController_findAll_v1
@@ -1196,7 +1522,7 @@ paths:
         "200":
           description: ""
       summary: List a receiver's virtual accounts
-      tags: *a16
+      tags: *a17
   /v1/offramp/quotes:
     post:
       operationId: OfframpController_createQuote_v1
@@ -1215,7 +1541,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/PayoutQuoteEntity"
       summary: Create a payout quote (EVM quote carries the approve contract)
-      tags: &a17
+      tags: &a18
         - offramp
   /v1/offramp/payouts/authorize:
     post:
@@ -1231,7 +1557,7 @@ paths:
         "201":
           description: ""
       summary: Build the unsigned Stellar/Solana payout tx to sign
-      tags: *a17
+      tags: *a18
   /v1/offramp/payouts:
     post:
       operationId: OfframpController_createPayout_v1
@@ -1250,7 +1576,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/PayoutEntity"
       summary: Create a payout from a quote
-      tags: *a17
+      tags: *a18
     get:
       operationId: OfframpController_findAll_v1
       parameters: []
@@ -1264,7 +1590,7 @@ paths:
                 items:
                   $ref: "#/components/schemas/PayoutEntity"
       summary: List the consumer's payouts
-      tags: *a17
+      tags: *a18
   /v1/offramp/payouts/{id}:
     get:
       operationId: OfframpController_findOne_v1
@@ -1282,7 +1608,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/PayoutEntity"
       summary: Get a payout (refreshes status from BlindPay)
-      tags: *a17
+      tags: *a18
   /v1/offramp/payouts/{id}/documents:
     post:
       operationId: OfframpController_addDocument_v1
@@ -1302,7 +1628,7 @@ paths:
         "201":
           description: ""
       summary: Attach a compliance document to a payout
-      tags: *a17
+      tags: *a18
 info:
   title: Cosmos Pay — Payments API
   description: "Payments microservice (Stellar payment intents). All endpoints
@@ -1873,12 +2199,18 @@ components:
           nullable: true
           example: GBFEE...WALLET
           description: Fee collector account (null when the fee is disabled).
+        label:
+          type: string
+          example: Cosmos Swap Commission
+          description: Human-readable commission label, mirrored as the on-chain MEMO_TEXT
+            when the caller supplies no memo.
       required:
         - asset
         - issuer
         - amount
         - bps
         - wallet
+        - label
     SwapDestinationQuote:
       type: object
       properties:
@@ -2068,6 +2400,12 @@ components:
           type: object
           nullable: true
           example: null
+        commissionMemo:
+          type: object
+          nullable: true
+          example: Cosmos Swap Commission
+          description: On-chain MEMO_TEXT label stamped when a commission is collected and
+            no caller memo was supplied (null otherwise).
         xdr:
           type: string
           description: Unsigned transaction envelope (base64 XDR) to sign.
@@ -2109,6 +2447,7 @@ components:
         - slippageBps
         - path
         - memo
+        - commissionMemo
         - xdr
         - uri
         - txHash
@@ -2184,6 +2523,416 @@ components:
         - submitted
         - status
         - swap
+    DepositLiquidityDto:
+      type: object
+      properties:
+        source:
+          type: string
+          description: Account funding (and signing) the deposit — the tx source.
+          example: GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ
+        assetACode:
+          type: string
+          description: First asset of the pair. Native if omitted.
+          example: XLM
+        assetAIssuer:
+          type: string
+          description: Issuer account for a non-native first asset.
+          example: GCRCUE2C5TBNIPYHMEP7NK5RWTT2WBSZ75CMARH7GDOHDDCQH3XANFOB
+        assetBCode:
+          type: string
+          description: Second asset of the pair. Native if omitted.
+          example: USDC
+        assetBIssuer:
+          type: string
+          description: Issuer account for a non-native second asset.
+          example: GA5ZSEJYB37JRC5AVCIA5MOP4RHTR6F3DSZL5A3W4G4M4N4A5U4QY3T6
+        maxAmountA:
+          type: string
+          description: Maximum amount of the first asset to deposit (decimal, ≤ 7 places).
+          example: "1000"
+        maxAmountB:
+          type: string
+          description: Maximum amount of the second asset. When the pool already has
+            reserves this is derived from the pool price if omitted; it is
+            required when the pool is new or empty (the deposit sets the price).
+          example: "100"
+        slippageBps:
+          type: number
+          description: Slippage tolerance in basis points (50 = 0.5%) used to derive the
+            on-chain min/max price bounds. Defaults to the service setting;
+            capped by it.
+          example: 50
+        memo:
+          type: string
+          description: Optional MEMO_ID (numeric uint64) echoed on-chain for reconciliation.
+          example: "123456789"
+      required:
+        - source
+        - maxAmountA
+    LiquidityOperationEntity:
+      type: object
+      properties:
+        id:
+          type: string
+          example: clx9z8a1b0000abcd1234efgh
+        kind:
+          type: string
+          enum:
+            - DEPOSIT
+            - WITHDRAW
+          example: DEPOSIT
+        status:
+          type: string
+          enum:
+            - PENDING
+            - SUBMITTED
+            - SUCCEEDED
+            - FAILED
+            - EXPIRED
+          example: PENDING
+        network:
+          type: string
+          example: testnet
+        source:
+          type: string
+          example: GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ
+        poolId:
+          type: string
+          example: dd7b1ab831c273310ddbec6f97870aa83c2fbd78ce22aded37ecbf4f3380fac7
+        assetA:
+          type: string
+          example: native
+        assetAIssuer:
+          type: object
+          nullable: true
+          example: null
+        assetB:
+          type: string
+          example: USDC
+        assetBIssuer:
+          type: object
+          nullable: true
+          example: GA5ZSEJYB37JRC5AVCIA5MOP4RHTR6F3DSZL5A3W4G4M4N4A5U4QY3T6
+        amountA:
+          type: string
+          example: "1000"
+          description: "DEPOSIT: maxAmountA cap. WITHDRAW: slippage-protected minimum of
+            asset A."
+        amountB:
+          type: string
+          example: "100"
+          description: "DEPOSIT: maxAmountB cap. WITHDRAW: slippage-protected minimum of
+            asset B."
+        shares:
+          type: object
+          nullable: true
+          example: null
+          description: Pool shares burned (WITHDRAW only).
+        minPrice:
+          type: object
+          nullable: true
+          example: "9.95"
+          description: DEPOSIT only.
+        maxPrice:
+          type: object
+          nullable: true
+          example: "10.05"
+          description: DEPOSIT only.
+        slippageBps:
+          type: number
+          example: 50
+        feeBps:
+          type: number
+          example: 50
+          description: Plan commission in basis points (50 = 0.5%), applied to both assets.
+        feeAmountA:
+          type: string
+          example: "5"
+          description: Commission taken from asset A (deducted from the deposit / the
+            withdrawn minimum). "0" when no commission applies.
+        feeAmountB:
+          type: string
+          example: "0.5"
+          description: Commission taken from asset B. "0" when none.
+        feeWallet:
+          type: object
+          nullable: true
+          example: GBFEE...WALLET
+          description: Commission collector account (null when the fee is disabled).
+        commissionMemo:
+          type: object
+          nullable: true
+          example: Cosmos Liquidity Commission
+          description: On-chain MEMO_TEXT label stamped when a commission is collected and
+            no caller memo was supplied (null when no commission applies).
+        xdr:
+          type: string
+          description: Unsigned transaction envelope (base64 XDR) to sign.
+          example: AAAAAgAAAABx…(base64 XDR)…AAAAAAAAAAA=
+        uri:
+          type: string
+          example: web+stellar:tx?xdr=AAAAAgAAAABx…
+        txHash:
+          type: string
+          description: Deterministic transaction hash (verified on submit).
+          example: 3389e9f0...64hex
+        qr:
+          type: string
+          example: data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA…
+        expiresAt:
+          type: object
+          nullable: true
+          example: 2026-07-04T12:39:56.000Z
+        createdAt:
+          format: date-time
+          type: string
+          example: 2026-07-04T12:34:56.000Z
+        updatedAt:
+          format: date-time
+          type: string
+          example: 2026-07-04T12:34:56.000Z
+      required:
+        - id
+        - kind
+        - status
+        - network
+        - source
+        - poolId
+        - assetA
+        - assetAIssuer
+        - assetB
+        - assetBIssuer
+        - amountA
+        - amountB
+        - shares
+        - minPrice
+        - maxPrice
+        - slippageBps
+        - feeBps
+        - feeAmountA
+        - feeAmountB
+        - feeWallet
+        - commissionMemo
+        - xdr
+        - uri
+        - txHash
+        - qr
+        - expiresAt
+        - createdAt
+        - updatedAt
+    WithdrawLiquidityDto:
+      type: object
+      properties:
+        source:
+          type: string
+          description: Account holding the pool shares (and signing) — the tx source.
+          example: GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ
+        poolId:
+          type: string
+          description: Stellar liquidity pool id (64-char hex).
+          example: dd7b1ab831c273310ddbec6f97870aa83c2fbd78ce22aded37ecbf4f3380fac7
+        shares:
+          type: string
+          description: Amount of pool shares to burn (decimal, ≤ 7 places).
+          example: "50"
+        slippageBps:
+          type: number
+          description: Slippage tolerance in basis points (50 = 0.5%) used to derive the
+            on-chain minimum received per reserve. Defaults to the service
+            setting.
+          example: 50
+        memo:
+          type: string
+          description: Optional MEMO_ID (numeric uint64) echoed on-chain for reconciliation.
+          example: "123456789"
+      required:
+        - source
+        - poolId
+        - shares
+    LiquidityPoolReserve:
+      type: object
+      properties:
+        asset:
+          type: string
+          example: native
+          description: Asset code, or "native".
+        issuer:
+          type: object
+          nullable: true
+          example: null
+        amount:
+          type: string
+          example: "82944.5873463"
+      required:
+        - asset
+        - issuer
+        - amount
+    LiquidityPositionEntity:
+      type: object
+      properties:
+        poolId:
+          type: string
+          example: dd7b1ab831c273310ddbec6f97870aa83c2fbd78ce22aded37ecbf4f3380fac7
+        shares:
+          type: string
+          example: "50.25"
+          description: Pool shares held.
+        totalShares:
+          type: string
+          example: "4462.7227546"
+        shareOfPoolBps:
+          type: number
+          example: 112
+          description: Share of the pool in basis points (112 = 1.12%).
+        reserves:
+          type: array
+          items:
+            $ref: "#/components/schemas/LiquidityPoolReserve"
+        redeemable:
+          description: What the shares redeem to at current reserves (pre-slippage).
+          type: array
+          items:
+            $ref: "#/components/schemas/LiquidityPoolReserve"
+      required:
+        - poolId
+        - shares
+        - totalShares
+        - shareOfPoolBps
+        - reserves
+        - redeemable
+    LiquidityPositionListEntity:
+      type: object
+      properties:
+        account:
+          type: string
+          example: GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ
+        network:
+          type: string
+          example: testnet
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/LiquidityPositionEntity"
+      required:
+        - account
+        - network
+        - data
+    LiquidityOperationListEntity:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/LiquidityOperationEntity"
+        total:
+          type: number
+          example: 1
+        take:
+          type: number
+          example: 20
+        skip:
+          type: number
+          example: 0
+      required:
+        - data
+        - total
+        - take
+        - skip
+    SubmitLiquidityDto:
+      type: object
+      properties:
+        signedXdr:
+          type: string
+          description: The signed transaction envelope (base64 XDR).
+          example: AAAAAgAAAABx…(signed base64 XDR)…AAAAAAAAAAA=
+      required:
+        - signedXdr
+    LiquiditySubmitResultEntity:
+      type: object
+      properties:
+        submitted:
+          type: boolean
+          example: true
+        status:
+          type: string
+          enum:
+            - PENDING
+            - SUBMITTED
+            - SUCCEEDED
+            - FAILED
+            - EXPIRED
+          example: SUCCEEDED
+        txHash:
+          type: string
+          nullable: true
+          example: 3389e9f0...64hex
+          description: The on-chain transaction hash once submitted.
+        reason:
+          type: string
+          nullable: true
+          example: null
+          description: Why submission failed, when `submitted` is false.
+        resultCodes:
+          nullable: true
+          example:
+            - op_bad_price
+          description: Horizon transaction/operation result codes on a rejection.
+          type: array
+          items:
+            type: string
+        operation:
+          $ref: "#/components/schemas/LiquidityOperationEntity"
+      required:
+        - submitted
+        - status
+        - operation
+    LiquidityPoolEntity:
+      type: object
+      properties:
+        id:
+          type: string
+          example: dd7b1ab831c273310ddbec6f97870aa83c2fbd78ce22aded37ecbf4f3380fac7
+        network:
+          type: string
+          example: testnet
+        feeBp:
+          type: number
+          example: 30
+          description: Pool fee in basis points (0.3%).
+        totalTrustlines:
+          type: string
+          example: "123"
+          description: Accounts holding pool shares.
+        totalShares:
+          type: string
+          example: "4462.7227546"
+        reserves:
+          description: Both reserves, canonical order.
+          type: array
+          items:
+            $ref: "#/components/schemas/LiquidityPoolReserve"
+      required:
+        - id
+        - network
+        - feeBp
+        - totalTrustlines
+        - totalShares
+        - reserves
+    LiquidityPoolListEntity:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/LiquidityPoolEntity"
+        cursor:
+          type: object
+          nullable: true
+          example: "113725249324879873"
+          description: Horizon paging cursor for the next page (null when done).
+      required:
+        - data
+        - cursor
     CreateWebhookEndpointDto:
       type: object
       properties:
@@ -2217,6 +2966,10 @@ components:
               - SWAP_SUBMITTED
               - SWAP_SUCCEEDED
               - SWAP_FAILED
+              - LIQUIDITY_CREATED
+              - LIQUIDITY_SUBMITTED
+              - LIQUIDITY_SUCCEEDED
+              - LIQUIDITY_FAILED
       required:
         - url
     WebhookEndpointWithSecretEntity:
@@ -2237,10 +2990,10 @@ components:
           example: true
         eventTypes:
           type: array
-          example: &a18
+          example: &a19
             - PAYMENT_INTENT_SUCCEEDED
           description: Subscribed events; empty means all.
-          items: &a19
+          items: &a20
             type: string
             enum:
               - PAYMENT_INTENT_CREATED
@@ -2260,6 +3013,10 @@ components:
               - SWAP_SUBMITTED
               - SWAP_SUCCEEDED
               - SWAP_FAILED
+              - LIQUIDITY_CREATED
+              - LIQUIDITY_SUBMITTED
+              - LIQUIDITY_SUCCEEDED
+              - LIQUIDITY_FAILED
         createdAt:
           format: date-time
           type: string
@@ -2299,9 +3056,9 @@ components:
           example: true
         eventTypes:
           type: array
-          example: *a18
+          example: *a19
           description: Subscribed events; empty means all.
-          items: *a19
+          items: *a20
         createdAt:
           format: date-time
           type: string
@@ -2351,6 +3108,10 @@ components:
               - SWAP_SUBMITTED
               - SWAP_SUCCEEDED
               - SWAP_FAILED
+              - LIQUIDITY_CREATED
+              - LIQUIDITY_SUBMITTED
+              - LIQUIDITY_SUCCEEDED
+              - LIQUIDITY_FAILED
     WebhookDeletedEntity:
       type: object
       properties:
@@ -2410,6 +3171,10 @@ components:
             - SWAP_SUBMITTED
             - SWAP_SUCCEEDED
             - SWAP_FAILED
+            - LIQUIDITY_CREATED
+            - LIQUIDITY_SUBMITTED
+            - LIQUIDITY_SUCCEEDED
+            - LIQUIDITY_FAILED
           example: PAYMENT_INTENT_SUCCEEDED
         eventId:
           type: string
@@ -2488,175 +3253,6 @@ components:
         - total
         - take
         - skip
-    CreateProductDto:
-      type: object
-      properties:
-        name:
-          type: string
-          example: Pro plan — monthly
-        description:
-          type: string
-          example: Full access, billed every month.
-        amount:
-          type: string
-          example: "49.00"
-          description: Decimal price (≤ 7 decimals). Omit for a customer-set amount.
-        assetCode:
-          type: string
-          example: USDC
-          description: Asset code the price is in. Omit for native lumens (XLM).
-        kind:
-          type: string
-          enum: &a20
-            - recurring
-            - one_time
-            - link
-          default: one_time
-        active:
-          type: boolean
-          default: true
-        reference:
-          type: string
-          example: sku_pro_monthly
-      required:
-        - name
-    ProductEntity:
-      type: object
-      properties:
-        id:
-          type: string
-          example: clx9z8a1b0000abcd1234efgh
-        name:
-          type: string
-          example: Pro plan — monthly
-        description:
-          type: object
-          nullable: true
-          example: Full access, billed every month.
-        amount:
-          type: object
-          nullable: true
-          example: "49.00"
-        asset:
-          type: string
-          example: native
-          description: Asset code, or "native" for XLM.
-        kind:
-          type: string
-          example: one_time
-          enum:
-            - recurring
-            - one_time
-            - link
-        active:
-          type: boolean
-          example: true
-        reference:
-          type: object
-          nullable: true
-          example: sku_pro_monthly
-        createdAt:
-          format: date-time
-          type: string
-        updatedAt:
-          format: date-time
-          type: string
-      required:
-        - id
-        - name
-        - description
-        - amount
-        - asset
-        - kind
-        - active
-        - reference
-        - createdAt
-        - updatedAt
-    UpdateProductDto:
-      type: object
-      properties:
-        name:
-          type: string
-          example: Pro plan — monthly
-        description:
-          type: string
-          example: Full access, billed every month.
-        amount:
-          type: string
-          example: "49.00"
-          description: Decimal price (≤ 7 decimals). Omit for a customer-set amount.
-        assetCode:
-          type: string
-          example: USDC
-          description: Asset code the price is in. Omit for native lumens (XLM).
-        kind:
-          type: string
-          enum: *a20
-          default: one_time
-        active:
-          type: boolean
-          default: true
-        reference:
-          type: string
-          example: sku_pro_monthly
-    ProductDeletedEntity:
-      type: object
-      properties:
-        id:
-          type: string
-          example: clx9z8a1b0000abcd1234efgh
-        deleted:
-          type: boolean
-          example: true
-      required:
-        - id
-        - deleted
-    CreateCustomerDto:
-      type: object
-      properties:
-        name:
-          type: string
-          example: Acme Inc.
-        alias:
-          type: string
-          example: Acme — billing
-        note:
-          type: string
-          example: VIP customer, net-30 terms.
-        email:
-          type: string
-          example: billing@acme.com
-        account:
-          type: string
-          example: GCALNQQBXAPZ2WIRSDDBMSTAKCUH5SG6U76YBFLQLIXJTF7FE5AX7AOO
-          description: Optional Stellar account to associate the customer with.
-        reference:
-          type: string
-          example: cust_001
-      required:
-        - name
-    UpdateCustomerDto:
-      type: object
-      properties:
-        name:
-          type: string
-          example: Acme Inc.
-        alias:
-          type: string
-          example: Acme — billing
-        note:
-          type: string
-          example: VIP customer, net-30 terms.
-        email:
-          type: string
-          example: billing@acme.com
-        account:
-          type: string
-          example: GCALNQQBXAPZ2WIRSDDBMSTAKCUH5SG6U76YBFLQLIXJTF7FE5AX7AOO
-          description: Optional Stellar account to associate the customer with.
-        reference:
-          type: string
-          example: cust_001
     ReceiverOwnerDto:
       type: object
       properties:
@@ -2899,6 +3495,11 @@ components:
         externalId:
           type: object
           example: cust_001
+        disabled:
+          type: boolean
+          example: false
+          description: "Owner/admin kill-switch: when true the account is blocked from
+            onramp/offramp."
         createdAt:
           format: date-time
           type: string
@@ -2911,8 +3512,53 @@ components:
         - id
         - blindpayId
         - type
+        - disabled
         - createdAt
         - updatedAt
+    ApproveReceiverDto:
+      type: object
+      properties:
+        redirect_url:
+          type: string
+          example: https://dev.cosmospay.lat/kyc/return/org/dev/clz9xreceiver01
+          description: Where BlindPay redirects the customer after they accept the terms.
+      required:
+        - redirect_url
+    RequestTosDto:
+      type: object
+      properties:
+        channel:
+          type: string
+          enum:
+            - code
+            - email
+          default: code
+          description: "'code' returns the hosted ToS URL to display; 'email' sends it to
+            the receiver (max once per day)."
+        redirect_url:
+          type: string
+          example: https://yourapp.com/kyc/return
+          description: Where BlindPay redirects after acceptance (gets ?tos_id=...).
+      required:
+        - redirect_url
+    EnableReceiverDto:
+      type: object
+      properties:
+        tos_id:
+          type: string
+          example: to_a1b2c3d4e5f6g7h
+          description: Accepted terms-of-service id (the ?tos_id=... from the ToS redirect).
+      required:
+        - tos_id
+    SetAccessDto:
+      type: object
+      properties:
+        disabled:
+          type: boolean
+          example: true
+          description: true = disable the fiat account, false = enable.
+      required:
+        - disabled
     UpdateReceiverDto:
       type: object
       properties:
@@ -3060,7 +3706,7 @@ components:
           example: Primary wallet
         network:
           type: string
-          enum: &a25
+          enum: &a26
             - ethereum
             - base
             - arbitrum
@@ -3334,6 +3980,175 @@ components:
           description: UUID for idempotency. Auto-generated when omitted.
       required:
         - redirect_url
+    CreateProductDto:
+      type: object
+      properties:
+        name:
+          type: string
+          example: Pro plan — monthly
+        description:
+          type: string
+          example: Full access, billed every month.
+        amount:
+          type: string
+          example: "49.00"
+          description: Decimal price (≤ 7 decimals). Omit for a customer-set amount.
+        assetCode:
+          type: string
+          example: USDC
+          description: Asset code the price is in. Omit for native lumens (XLM).
+        kind:
+          type: string
+          enum: &a23
+            - recurring
+            - one_time
+            - link
+          default: one_time
+        active:
+          type: boolean
+          default: true
+        reference:
+          type: string
+          example: sku_pro_monthly
+      required:
+        - name
+    ProductEntity:
+      type: object
+      properties:
+        id:
+          type: string
+          example: clx9z8a1b0000abcd1234efgh
+        name:
+          type: string
+          example: Pro plan — monthly
+        description:
+          type: object
+          nullable: true
+          example: Full access, billed every month.
+        amount:
+          type: object
+          nullable: true
+          example: "49.00"
+        asset:
+          type: string
+          example: native
+          description: Asset code, or "native" for XLM.
+        kind:
+          type: string
+          example: one_time
+          enum:
+            - recurring
+            - one_time
+            - link
+        active:
+          type: boolean
+          example: true
+        reference:
+          type: object
+          nullable: true
+          example: sku_pro_monthly
+        createdAt:
+          format: date-time
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+        - id
+        - name
+        - description
+        - amount
+        - asset
+        - kind
+        - active
+        - reference
+        - createdAt
+        - updatedAt
+    UpdateProductDto:
+      type: object
+      properties:
+        name:
+          type: string
+          example: Pro plan — monthly
+        description:
+          type: string
+          example: Full access, billed every month.
+        amount:
+          type: string
+          example: "49.00"
+          description: Decimal price (≤ 7 decimals). Omit for a customer-set amount.
+        assetCode:
+          type: string
+          example: USDC
+          description: Asset code the price is in. Omit for native lumens (XLM).
+        kind:
+          type: string
+          enum: *a23
+          default: one_time
+        active:
+          type: boolean
+          default: true
+        reference:
+          type: string
+          example: sku_pro_monthly
+    ProductDeletedEntity:
+      type: object
+      properties:
+        id:
+          type: string
+          example: clx9z8a1b0000abcd1234efgh
+        deleted:
+          type: boolean
+          example: true
+      required:
+        - id
+        - deleted
+    CreateCustomerDto:
+      type: object
+      properties:
+        name:
+          type: string
+          example: Acme Inc.
+        alias:
+          type: string
+          example: Acme — billing
+        note:
+          type: string
+          example: VIP customer, net-30 terms.
+        email:
+          type: string
+          example: billing@acme.com
+        account:
+          type: string
+          example: GCALNQQBXAPZ2WIRSDDBMSTAKCUH5SG6U76YBFLQLIXJTF7FE5AX7AOO
+          description: Optional Stellar account to associate the customer with.
+        reference:
+          type: string
+          example: cust_001
+      required:
+        - name
+    UpdateCustomerDto:
+      type: object
+      properties:
+        name:
+          type: string
+          example: Acme Inc.
+        alias:
+          type: string
+          example: Acme — billing
+        note:
+          type: string
+          example: VIP customer, net-30 terms.
+        email:
+          type: string
+          example: billing@acme.com
+        account:
+          type: string
+          example: GCALNQQBXAPZ2WIRSDDBMSTAKCUH5SG6U76YBFLQLIXJTF7FE5AX7AOO
+          description: Optional Stellar account to associate the customer with.
+        reference:
+          type: string
+          example: cust_001
     PayerRulesDto:
       type: object
       properties:
@@ -3378,7 +4193,7 @@ components:
             receives the minted stablecoin.
         currency_type:
           type: string
-          enum: &a24
+          enum: &a25
             - sender
             - receiver
           example: sender
@@ -3399,7 +4214,7 @@ components:
             `_bitso` payout rails)."
         token:
           type: string
-          enum: &a23
+          enum: &a24
             - USDC
             - USDT
             - USDB
@@ -3523,7 +4338,7 @@ components:
           example: cfsb
         token:
           type: string
-          enum: *a23
+          enum: *a24
           example: USDC
         blockchain_wallet_id:
           type: string
@@ -3549,7 +4364,7 @@ components:
             /v1/kyc/receivers/:id/bank-accounts) that receives the fiat.
         currency_type:
           type: string
-          enum: *a24
+          enum: *a25
           example: sender
         cover_fees:
           type: boolean
@@ -3561,11 +4376,11 @@ components:
           description: Amount in minor units (integer).
         network:
           type: string
-          enum: *a25
+          enum: *a26
           example: base
         token:
           type: string
-          enum: *a23
+          enum: *a24
           example: USDC
         description:
           type: string
@@ -3591,10 +4406,15 @@ components:
         sender_amount:
           type: number
           example: 10000
+        receiver_amount:
+          type: number
+          example: 156129400
+          description: Local fiat amount to receive, minor units (e.g. ARS cents).
         receiver_local_amount:
           type: number
-          example: 53850
-          description: Local fiat amount (minor units).
+          example: 156129400
+          description: Local fiat amount (minor units). Normalized from `receiver_amount`
+            when BlindPay returns 0 here.
         contract:
           type: object
           description: EVM approve payload to sign (abi, address, functionName, amount,

@@ -3,7 +3,6 @@ import { join } from 'node:path';
 import { VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { stringify } from 'yaml';
-import { AppModule } from '../src/app.module';
 import { createOpenApiDocument } from '../src/swagger';
 
 /**
@@ -14,6 +13,17 @@ import { createOpenApiDocument } from '../src/swagger';
  *   npm run openapi:generate
  */
 async function generate(): Promise<void> {
+  // AppModule validates these variables while loading. Spec generation never
+  // connects to Postgres or accepts gateway traffic, so deterministic local
+  // placeholders keep this offline command independent from real credentials.
+  process.env.DATABASE_URL ??=
+    'postgresql://openapi:openapi@localhost:5432/openapi';
+  process.env.APISIX_GATEWAY_SECRET ??= 'openapi-generation-only';
+
+  // Import only after the offline defaults are set: ConfigModule validates the
+  // environment as soon as AppModule is evaluated.
+  const { AppModule } = await import('../src/app.module');
+
   const app = await NestFactory.create(AppModule, {
     preview: true,
     logger: false,
@@ -34,12 +44,10 @@ async function generate(): Promise<void> {
 
   await app.close();
 
-  // eslint-disable-next-line no-console
   console.log(`OpenAPI spec written to:\n  ${jsonPath}\n  ${yamlPath}`);
 }
 
 generate().catch((err) => {
-  // eslint-disable-next-line no-console
   console.error('Failed to generate OpenAPI spec:', err);
   process.exit(1);
 });

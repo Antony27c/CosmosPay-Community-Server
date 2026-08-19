@@ -182,11 +182,19 @@ Live (non-production), served by the app:
 - `GET /docs/yaml` — OpenAPI 3.0 spec (YAML)
 
 Export the spec to files (so another server can host/consume it) — no database
-required, runs in Nest preview mode:
+connection or real gateway secret is required; it runs in Nest preview mode
+with local placeholders when those environment variables are absent:
 
 ```bash
 npm run openapi:generate
 # writes openapi/openapi.json and openapi/openapi.yaml
+```
+
+CI and the release gate regenerate both committed files and reject drift. Run
+the same check before committing a controller or DTO change:
+
+```bash
+npm run openapi:check
 ```
 
 Paths in the spec already include the version (`/v1/...`). To stamp

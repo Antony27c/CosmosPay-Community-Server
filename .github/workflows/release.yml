@@ -1,8 +1,9 @@
 name: Release
 
 # Auto-versioned releases from Conventional Commits. On every push to main this:
-#   0. Builds + runs the test suite + a dependency security audit (`verify` job). The
-#      release job `needs` it, so nothing is versioned/tagged unless everything passes.
+#   0. Builds + checks OpenAPI drift + runs tests and a dependency security audit
+#      (`verify` job). The release job `needs` it, so nothing is versioned/tagged
+#      unless everything passes.
 #   1. Picks a semver bump from the pushed commit messages (feat -> minor,
 #      fix/anything -> patch, `!:` or `BREAKING CHANGE` -> major).
 #   2. Bumps package.json, regenerates CHANGELOG.md (git-cliff), commits both back
@@ -22,7 +23,7 @@ permissions:
 
 jobs:
   verify:
-    name: Build, test & security audit
+    name: Build, OpenAPI, test & security audit
     runs-on: ubuntu-latest
     env:
       # prisma.config.ts requires DATABASE_URL to resolve at load time (codegen only, no
@@ -40,6 +41,9 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Verify OpenAPI is up to date
+        run: npm run openapi:check
 
       - name: Test
         run: npm test

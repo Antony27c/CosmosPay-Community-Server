@@ -1,7 +1,7 @@
 name: CI
 
-# Build + test on every push and pull request. `npm run build` runs prisma generate
-# then nest build; the Jest suite runs against the compiled/generated client.
+# Build + OpenAPI drift check + test on every push and pull request. `npm run build`
+# runs prisma generate then nest build; Jest uses the compiled/generated client.
 on:
   push:
     branches: [main, dev]
@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   build:
-    name: Build & test
+    name: Build, OpenAPI & test
     runs-on: ubuntu-latest
     env:
       # prisma.config.ts requires DATABASE_URL to resolve at load time. `prisma generate`
@@ -37,6 +37,10 @@ jobs:
       # prisma generate (-> generated/prisma) + nest build.
       - name: Build
         run: npm run build
+
+      # Regenerate the committed contract and fail if controllers/DTOs drifted.
+      - name: Verify OpenAPI is up to date
+        run: npm run openapi:check
 
       # Jest unit/integration suite (no DB required — external services are mocked).
       - name: Test
