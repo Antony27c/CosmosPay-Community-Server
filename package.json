@@ -79,8 +79,11 @@
   },
   "overrides": {
     "multer": "^2.2.0",
-    "@hono/node-server": "^1.19.14",
-    "js-yaml": "^4.2.0"
+    "@hono/node-server": "^1.19.15",
+    "js-yaml": "^5.3.0",
+    "hono": "^4.13.3",
+    "deepmerge-ts": "^8.0.2",
+    "valibot": "^1.4.2"
   },
   "jest": {
     "moduleFileExtensions": [
