@@ -5,6 +5,7 @@ import {
   verifyAdminBearer,
   type AdminCredential,
 } from './admin-auth';
+import { Logger } from '@nestjs/common';
 
 describe('Admin auth spec (issue #34)', () => {
   const readCred: AdminCredential = {
@@ -55,6 +56,33 @@ describe('Admin auth spec (issue #34)', () => {
       expect(
         parseAdminCredentials(JSON.stringify([readCred, writeCred])),
       ).toEqual(credentials);
+    });
+
+    it('warns when JSON is malformed without leaking secrets', () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      expect(parseAdminCredentials('{bad')).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('not valid JSON'),
+      );
+      warn.mockRestore();
+    });
+
+    it('warns when individual credentials are rejected', () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      expect(
+        parseAdminCredentials(
+          JSON.stringify([
+            { id: 'ok', secret: 'write-secret-00000', role: 'write' },
+            { id: 'short', secret: '1', role: 'write' },
+          ]),
+        ),
+      ).toEqual([
+        { id: 'ok', secret: 'write-secret-00000', role: 'write' },
+      ]);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('1 credential(s) rejected'),
+      );
+      warn.mockRestore();
     });
   });
 

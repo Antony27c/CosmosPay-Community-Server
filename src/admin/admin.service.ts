@@ -2,6 +2,8 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReceiversService } from '../kyc/receivers/receivers.service';
 import { RequestTosDto } from '../kyc/receivers/dto/request-tos.dto';
+import type { AdminPrincipal } from './admin-auth';
+import { toAuditData } from './admin-audit.service';
 
 /** Clamp a requested page size to a sane range. */
 function take(n?: number): number {
@@ -26,7 +28,7 @@ const consumerSelect = {
 /**
  * Platform-admin (owner) reads: the SAME data as the per-consumer services, but across
  * EVERY consumer/organization — no consumer scoping. Reached only via the AdminGuard
- * (trusted X-Cosmos-Admin marker). Every list carries the owning consumer for attribution.
+ * (Bearer credentials + roles, issue #34). Every list carries the owning consumer for attribution.
  */
 @Injectable()
 export class AdminService {
@@ -40,14 +42,31 @@ export class AdminService {
    * (pending_review → pending_user) and return BlindPay's hosted terms url + the
    * customer's email so the dev platform sends the terms email. The org-scoped approve
    * only works for the owner's own org, so the global admin Fiat view needs this.
+   * Local status write + audit row commit in one transaction.
    */
-  async approveReceiver(id: string, redirectUrl: string) {
-    return this.receiversSvc.approveById(id, redirectUrl);
+  async approveReceiver(
+    id: string,
+    redirectUrl: string,
+    actor: AdminPrincipal,
+  ) {
+    return this.receiversSvc.approveById(
+      id,
+      redirectUrl,
+      toAuditData(actor, 'receivers.approve', 'receiver', id, {
+        redirect_url: redirectUrl,
+      }),
+    );
   }
 
   /** Platform-admin activation of ANY receiver across consumers (post terms acceptance). */
-  async enableReceiver(id: string, tosId: string) {
-    return this.receiversSvc.enableById(id, tosId);
+  async enableReceiver(id: string, tosId: string, actor: AdminPrincipal) {
+    return this.receiversSvc.enableById(
+      id,
+      tosId,
+      toAuditData(actor, 'receivers.enable', 'receiver', id, {
+        tos_id: tosId,
+      }),
+    );
   }
 
   /**
@@ -59,9 +78,18 @@ export class AdminService {
   async requestReceiverTos(
     id: string,
     dto: RequestTosDto,
+    actor: AdminPrincipal,
     cooldownMs?: number,
   ) {
-    return this.receiversSvc.requestTosById(id, dto, cooldownMs);
+    return this.receiversSvc.requestTosById(
+      id,
+      dto,
+      cooldownMs,
+      toAuditData(actor, 'receivers.requestTos', 'receiver', id, {
+        channel: dto.channel ?? 'code',
+        redirect_url: dto.redirect_url,
+      }),
+    );
   }
 
   /** Global, cross-consumer summary — the owner's "everything at a glance". */
@@ -290,16 +318,27 @@ export class AdminService {
   /**
    * Platform-admin fiat kill-switch across ANY consumer: enable/disable a receiver by id
    * without consumer scoping (the owner acts globally). Mirrors the per-org access toggle.
+   * Mutation + audit row commit in one transaction (issue #34 / Gitar review).
    */
-  async setReceiverAccess(id: string, disabled: boolean) {
-    const row = await this.prisma.blindpayReceiver.findUnique({
-      where: { id },
-    });
-    if (!row) throw new NotFoundException('Receiver not found');
-    return this.prisma.blindpayReceiver.update({
-      where: { id },
-      data: { disabled },
-      include: consumerSelect,
+  async setReceiverAccess(
+    id: string,
+    disabled: boolean,
+    actor: AdminPrincipal,
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      const row = await tx.blindpayReceiver.findUnique({ where: { id } });
+      if (!row) throw new NotFoundException('Receiver not found');
+      const result = await tx.blindpayReceiver.update({
+        where: { id },
+        data: { disabled },
+        include: consumerSelect,
+      });
+      await tx.adminAuditLog.create({
+        data: toAuditData(actor, 'receivers.setAccess', 'receiver', id, {
+          disabled,
+        }),
+      });
+      return result;
     });
   }
 

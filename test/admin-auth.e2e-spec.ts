@@ -26,12 +26,73 @@ describe('Admin auth & audit (e2e) — issue #34', () => {
 
   const adminServiceMock = {
     summary: jest.fn().mockResolvedValue({ ok: true }),
-    setReceiverAccess: jest.fn().mockResolvedValue({ id: 'rcv_1', disabled: true }),
-    approveReceiver: jest.fn().mockResolvedValue({ id: 'rcv_1', url: 'https://tos' }),
-    enableReceiver: jest.fn().mockResolvedValue({ id: 'rcv_1', status: 'active' }),
-    requestReceiverTos: jest
-      .fn()
-      .mockResolvedValue({ id: 'rcv_1', url: 'https://tos', email: 'a@b.c' }),
+    setReceiverAccess: jest.fn(
+      async (_id: string, disabled: boolean, actor: { id: string; role: string }) => {
+        auditRows.push({
+          id: `audit_${auditRows.length + 1}`,
+          createdAt: new Date(),
+          actorId: actor.id,
+          actorRole: actor.role,
+          action: 'receivers.setAccess',
+          resourceType: 'receiver',
+          resourceId: 'rcv_1',
+          metadata: { disabled },
+        });
+        return { id: 'rcv_1', disabled };
+      },
+    ),
+    approveReceiver: jest.fn(
+      async (_id: string, redirect_url: string, actor: { id: string; role: string }) => {
+        auditRows.push({
+          id: `audit_${auditRows.length + 1}`,
+          createdAt: new Date(),
+          actorId: actor.id,
+          actorRole: actor.role,
+          action: 'receivers.approve',
+          resourceType: 'receiver',
+          resourceId: 'rcv_1',
+          metadata: { redirect_url },
+        });
+        return { id: 'rcv_1', url: 'https://tos' };
+      },
+    ),
+    enableReceiver: jest.fn(
+      async (_id: string, tos_id: string, actor: { id: string; role: string }) => {
+        auditRows.push({
+          id: `audit_${auditRows.length + 1}`,
+          createdAt: new Date(),
+          actorId: actor.id,
+          actorRole: actor.role,
+          action: 'receivers.enable',
+          resourceType: 'receiver',
+          resourceId: 'rcv_1',
+          metadata: { tos_id },
+        });
+        return { id: 'rcv_1', status: 'active' };
+      },
+    ),
+    requestReceiverTos: jest.fn(
+      async (
+        _id: string,
+        dto: { redirect_url: string; channel?: string },
+        actor: { id: string; role: string },
+      ) => {
+        auditRows.push({
+          id: `audit_${auditRows.length + 1}`,
+          createdAt: new Date(),
+          actorId: actor.id,
+          actorRole: actor.role,
+          action: 'receivers.requestTos',
+          resourceType: 'receiver',
+          resourceId: 'rcv_1',
+          metadata: {
+            channel: dto.channel ?? 'code',
+            redirect_url: dto.redirect_url,
+          },
+        });
+        return { id: 'rcv_1', url: 'https://tos', email: 'a@b.c' };
+      },
+    ),
   };
 
   const prismaMock: any = {

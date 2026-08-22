@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import type { Prisma } from '../../generated/prisma/client';
 import type { AdminPrincipal } from './admin-auth';
 import { PrismaService } from '../prisma/prisma.service';
@@ -11,25 +11,62 @@ export interface RecordAdminAuditInput {
   metadata?: Prisma.InputJsonValue;
 }
 
+export type AdminAuditData = {
+  actorId: string;
+  actorRole: string;
+  action: string;
+  resourceType: string;
+  resourceId: string;
+  metadata?: Prisma.InputJsonValue;
+};
+
+/** Build the Prisma create payload for an audit row from a principal + action. */
+export function toAuditData(
+  actor: AdminPrincipal,
+  action: string,
+  resourceType: string,
+  resourceId: string,
+  metadata?: Prisma.InputJsonValue,
+): AdminAuditData {
+  return {
+    actorId: actor.id,
+    actorRole: actor.role,
+    action,
+    resourceType,
+    resourceId,
+    metadata,
+  };
+}
+
 /**
  * Append-only platform-admin audit trail (issue #34).
  * There is intentionally no delete/update API — rows are immutable history.
+ * Prefer writing via {@link recordWith} inside the same `$transaction` as the
+ * mutation it describes so the two cannot diverge.
  */
 @Injectable()
 export class AdminAuditService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /** Standalone insert (prefer transactional {@link recordWith} for mutations). */
   async record(input: RecordAdminAuditInput) {
     return this.prisma.adminAuditLog.create({
-      data: {
-        actorId: input.actor.id,
-        actorRole: input.actor.role,
-        action: input.action,
-        resourceType: input.resourceType,
-        resourceId: input.resourceId,
-        metadata: input.metadata ?? undefined,
-      },
+      data: toAuditData(
+        input.actor,
+        input.action,
+        input.resourceType,
+        input.resourceId,
+        input.metadata,
+      ),
     });
+  }
+
+  /** Insert using an interactive-transaction client. */
+  async recordWith(
+    tx: Prisma.TransactionClient,
+    data: AdminAuditData,
+  ) {
+    return tx.adminAuditLog.create({ data });
   }
 
   async list(opts: { take?: number; skip?: number } = {}) {

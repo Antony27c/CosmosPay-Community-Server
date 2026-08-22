@@ -157,83 +157,49 @@ export class AdminController {
 
   @Patch('receivers/:id/access')
   @RequireAdminRole('write')
-  async setReceiverAccess(
+  setReceiverAccess(
     @CurrentAdmin() actor: AdminPrincipal,
     @Param('id') id: string,
     @Body() dto: SetAccessDto,
   ) {
-    const result = await this.admin.setReceiverAccess(id, dto.disabled);
-    await this.audit.record({
-      actor,
-      action: 'receivers.setAccess',
-      resourceType: 'receiver',
-      resourceId: id,
-      metadata: { disabled: dto.disabled },
-    });
-    return result;
+    return this.admin.setReceiverAccess(id, dto.disabled, actor);
   }
 
   @Post('receivers/:id/approve')
   @RequireAdminRole('write')
-  async approveReceiver(
+  approveReceiver(
     @CurrentAdmin() actor: AdminPrincipal,
     @Param('id') id: string,
     @Body() dto: ApproveReceiverDto,
   ) {
-    const result = await this.admin.approveReceiver(id, dto.redirect_url);
-    await this.audit.record({
-      actor,
-      action: 'receivers.approve',
-      resourceType: 'receiver',
-      resourceId: id,
-      metadata: { redirect_url: dto.redirect_url },
-    });
-    return result;
+    return this.admin.approveReceiver(id, dto.redirect_url, actor);
   }
 
   @Post('receivers/:id/enable')
   @RequireAdminRole('write')
-  async enableReceiver(
+  enableReceiver(
     @CurrentAdmin() actor: AdminPrincipal,
     @Param('id') id: string,
     @Body() dto: EnableReceiverDto,
   ) {
-    const result = await this.admin.enableReceiver(id, dto.tos_id);
-    await this.audit.record({
-      actor,
-      action: 'receivers.enable',
-      resourceType: 'receiver',
-      resourceId: id,
-      metadata: { tos_id: dto.tos_id },
-    });
-    return result;
+    return this.admin.enableReceiver(id, dto.tos_id, actor);
   }
 
   @Post('receivers/:id/tos')
   @RequireAdminRole('write')
-  async requestReceiverTos(
+  requestReceiverTos(
     @CurrentAdmin() actor: AdminPrincipal,
     @Param('id') id: string,
     @Body() dto: RequestTosDto,
     @Headers('x-cosmos-internal') internal?: string,
     @Headers('x-cosmos-tos-cooldown-ms') cooldown?: string,
   ) {
-    const result = await this.admin.requestReceiverTos(
+    return this.admin.requestReceiverTos(
       id,
       dto,
+      actor,
       resolveTosCooldownMs(internal, cooldown),
     );
-    await this.audit.record({
-      actor,
-      action: 'receivers.requestTos',
-      resourceType: 'receiver',
-      resourceId: id,
-      metadata: {
-        channel: dto.channel ?? 'code',
-        redirect_url: dto.redirect_url,
-      },
-    });
-    return result;
   }
 }
 

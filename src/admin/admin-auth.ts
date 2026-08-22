@@ -1,4 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
+import { Logger } from '@nestjs/common';
 
 /**
  * Executable spec for platform-admin auth (issue #34).
@@ -23,6 +24,8 @@ export interface AdminPrincipal {
   role: AdminRole;
 }
 
+const log = new Logger('AdminAuth');
+
 /** Role lattice: write implies read. */
 export function roleSatisfies(have: AdminRole, need: AdminRole): boolean {
   if (need === 'read') return have === 'read' || have === 'write';
@@ -32,32 +35,52 @@ export function roleSatisfies(have: AdminRole, need: AdminRole): boolean {
 /**
  * Parse `ADMIN_API_CREDENTIALS` JSON.
  * Expected shape: [{"id":"viewer","secret":"…","role":"read"}, …]
- * Invalid / empty input ⇒ [] (fail closed).
+ * Invalid / empty input ⇒ [] (fail closed). Warns (without leaking secrets)
+ * when the env var is present but yields zero/partial credentials.
  */
 export function parseAdminCredentials(
   raw: string | undefined,
 ): AdminCredential[] {
   if (!raw || !raw.trim()) return [];
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    const out: AdminCredential[] = [];
-    for (const item of parsed) {
-      if (!item || typeof item !== 'object') continue;
-      const rec = item as Record<string, unknown>;
-      const id = typeof rec.id === 'string' ? rec.id.trim() : '';
-      const secret = typeof rec.secret === 'string' ? rec.secret : '';
-      const role = rec.role;
-      if (!id || !secret) continue;
-      if (role !== 'read' && role !== 'write') continue;
-      // Reject trivially short secrets so "1" can never be a valid credential.
-      if (secret.length < 16) continue;
-      out.push({ id, secret, role });
-    }
-    return out;
+    parsed = JSON.parse(raw);
   } catch {
+    log.warn(
+      'ADMIN_API_CREDENTIALS is not valid JSON; admin access disabled (fail closed)',
+    );
     return [];
   }
+  if (!Array.isArray(parsed)) {
+    log.warn(
+      'ADMIN_API_CREDENTIALS must be a JSON array; admin access disabled (fail closed)',
+    );
+    return [];
+  }
+  const out: AdminCredential[] = [];
+  for (const item of parsed) {
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    const id = typeof rec.id === 'string' ? rec.id.trim() : '';
+    const secret = typeof rec.secret === 'string' ? rec.secret : '';
+    const role = rec.role;
+    if (!id || !secret) continue;
+    if (role !== 'read' && role !== 'write') continue;
+    // Reject trivially short secrets so "1" can never be a valid credential.
+    if (secret.length < 16) continue;
+    out.push({ id, secret, role });
+  }
+  if (out.length < parsed.length) {
+    log.warn(
+      `ADMIN_API_CREDENTIALS: ${parsed.length - out.length} credential(s) rejected (bad role, missing fields, or secret < 16 chars)`,
+    );
+  }
+  if (parsed.length > 0 && out.length === 0) {
+    log.warn(
+      'ADMIN_API_CREDENTIALS yielded no usable credentials; admin access disabled (fail closed)',
+    );
+  }
+  return out;
 }
 
 /**
