@@ -191,6 +191,26 @@ paths:
                 $ref: "#/components/schemas/PaymentIntentListEntity"
       summary: List the consumer's payment intents
       tags: *a5
+  /v1/payment-intents/{id}/transitions:
+    get:
+      operationId: PaymentIntentsController_listTransitions_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PaymentIntentTransitionEntity"
+      summary: List the status-transition history for a payment intent
+      tags: *a5
   /v1/payment-intents/{id}:
     get:
       operationId: PaymentIntentsController_findOne_v1
@@ -2057,6 +2077,56 @@ components:
         - total
         - take
         - skip
+    PaymentIntentTransitionEntity:
+      type: object
+      properties:
+        id:
+          type: string
+          example: clxtransition0001
+        intentId:
+          type: string
+          example: clx9z8a1b0000abcd1234efgh
+        fromStatus:
+          type: string
+          enum:
+            - PENDING
+            - SUBMITTED
+            - SUCCEEDED
+            - FAILED
+            - CANCELLED
+            - EXPIRED
+          example: PENDING
+        toStatus:
+          type: string
+          enum:
+            - PENDING
+            - SUBMITTED
+            - SUCCEEDED
+            - FAILED
+            - CANCELLED
+            - EXPIRED
+          example: SUBMITTED
+        txHash:
+          type: object
+          nullable: true
+          example: 3389e9f0…
+        actor:
+          type: string
+          example: api
+          description: api | validate | observer | system
+        reason:
+          type: object
+          nullable: true
+        createdAt:
+          format: date-time
+          type: string
+      required:
+        - id
+        - intentId
+        - fromStatus
+        - toStatus
+        - actor
+        - createdAt
     ValidatePaymentIntentDto:
       type: object
       properties:

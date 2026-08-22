@@ -24,6 +24,9 @@ describe('APISIX gateway validation (e2e)', () => {
     onModuleDestroy: jest.fn(),
     $connect: jest.fn(),
     $disconnect: jest.fn(),
+    requestLog: {
+      create: jest.fn().mockResolvedValue({ id: 'rl_1' }),
+    },
   };
 
   beforeAll(async () => {
@@ -69,6 +72,7 @@ describe('APISIX gateway validation (e2e)', () => {
       .post(route)
       .set('x-gateway-secret', 'topsecret')
       .set('x-consumer-username', 'cosmos_u1')
+      .set('x-consumer-permissions', 'payments:write')
       .send({})
       .expect(400));
 
