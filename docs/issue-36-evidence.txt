@@ -1,19 +1,21 @@
-======== GRAPH SUITE ========
+# Issue #36 — evidence (payment-intent state machine)
+
+## Graph suite
+
+```text
+$ npx jest src/payment-intents/payment-intent-state-machine.spec.ts --no-coverage
+
 Test Suites: 1 passed, 1 total
 Tests:       83 passed, 83 total
-Snapshots:   0 total
-Time:        1.597 s
-Ran all test suites matching src/payment-intents/payment-intent-state-machine.spec.ts.
+```
 
-======== INVALID TRANSITION E2E ========
-Test Suites: 1 passed, 1 total
-Tests:       2 skipped, 1 passed, 3 total
-Snapshots:   0 total
-Time:        3.042 s
-Ran all test suites matching test/payment-intent-transitions.e2e-spec.ts with tests matching "rejects forcing EXPIRED".
-Force exiting Jest: Have you considered using `--detectOpenHandles` to detect async operations that kept running after all tests finished?
+Full adjacency matrix + terminal immutability + SUCCEEDED requires txHash.
 
-======== SAMPLE API 400 BODY (EXPIRED → SUCCEEDED) ========
+## Invalid transition API response
+
+`PATCH /v1/payment-intents/:id` with `EXPIRED → SUCCEEDED` returns:
+
+```json
 {
   "statusCode": 400,
   "error": "Bad Request",
@@ -22,3 +24,15 @@ Force exiting Jest: Have you considered using `--detectOpenHandles` to detect as
   "from": "EXPIRED",
   "to": "SUCCEEDED"
 }
+```
+
+Covered by `test/payment-intent-transitions.e2e-spec.ts`.
+
+## Acceptance checklist
+
+- [x] Single transition entry point (`PaymentIntentsService.transition`)
+- [x] Undeclared transitions rejected with explicit error code
+- [x] SUCCEEDED requires non-empty on-chain `txHash`
+- [x] Terminal statuses cannot be abandoned
+- [x] Full graph tests (valid + invalid)
+- [x] Consultable history via `GET /v1/payment-intents/:id/transitions`

@@ -326,7 +326,10 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PaymentIntentTransitionListEntity"
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PaymentIntentTransitionEntity"
+                  }
                 }
               }
             }
@@ -3292,20 +3295,6 @@
           "toStatus",
           "actor",
           "createdAt"
-        ]
-      },
-      "PaymentIntentTransitionListEntity": {
-        "type": "object",
-        "properties": {
-          "data": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/PaymentIntentTransitionEntity"
-            }
-          }
-        },
-        "required": [
-          "data"
         ]
       },
       "ValidatePaymentIntentDto": {

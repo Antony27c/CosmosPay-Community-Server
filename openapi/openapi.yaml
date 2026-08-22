@@ -206,7 +206,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PaymentIntentTransitionListEntity"
+                type: array
+                items:
+                  $ref: "#/components/schemas/PaymentIntentTransitionEntity"
       summary: List the status-transition history for a payment intent
       tags: *a5
   /v1/payment-intents/{id}:
@@ -2125,15 +2127,6 @@ components:
         - toStatus
         - actor
         - createdAt
-    PaymentIntentTransitionListEntity:
-      type: object
-      properties:
-        data:
-          type: array
-          items:
-            $ref: "#/components/schemas/PaymentIntentTransitionEntity"
-      required:
-        - data
     ValidatePaymentIntentDto:
       type: object
       properties:

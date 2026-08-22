@@ -26,7 +26,7 @@ import {
   DeletedEntity,
   PaymentIntentEntity,
   PaymentIntentListEntity,
-  PaymentIntentTransitionListEntity,
+  PaymentIntentTransitionEntity,
   PayPaymentIntentEntity,
   TxPaymentIntentEntity,
   ValidationOutcomeEntity,
@@ -82,7 +82,7 @@ export class PaymentIntentsController {
   @ApiOperation({
     summary: 'List the status-transition history for a payment intent',
   })
-  @ApiOkResponse({ type: PaymentIntentTransitionListEntity })
+  @ApiOkResponse({ type: PaymentIntentTransitionEntity, isArray: true })
   listTransitions(
     @CurrentConsumer() consumer: GatewayConsumer,
     @Param('id') id: string,
