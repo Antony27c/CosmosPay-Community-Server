@@ -260,10 +260,33 @@ model PaymentIntent {
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
 
+  // Append-only audit trail of status transitions (issue #36).
+  transitions PaymentIntentTransition[]
+
   @@unique([consumerId, memo]) // idempotency: one intent per (consumer, memo)
   @@index([consumerId])
   @@index([status])
   @@map("payment_intent")
+}
+
+// Immutable history of every PaymentIntent status change. Written only by the
+// single transition() entry point so the ledger cannot diverge from the graph.
+model PaymentIntentTransition {
+  id         String              @id @default(cuid())
+  intentId   String
+  intent     PaymentIntent       @relation(fields: [intentId], references: [id], onDelete: Cascade)
+
+  fromStatus PaymentIntentStatus
+  toStatus   PaymentIntentStatus
+  txHash     String?
+  // Who triggered the change: api | validate | observer | system
+  actor      String
+  reason     String?
+
+  createdAt  DateTime            @default(now())
+
+  @@index([intentId, createdAt])
+  @@map("payment_intent_transition")
 }
 
 // ---------------------------------------------------------------------------

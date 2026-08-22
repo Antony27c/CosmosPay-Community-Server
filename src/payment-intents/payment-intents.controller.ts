@@ -26,6 +26,7 @@ import {
   DeletedEntity,
   PaymentIntentEntity,
   PaymentIntentListEntity,
+  PaymentIntentTransitionEntity,
   PayPaymentIntentEntity,
   TxPaymentIntentEntity,
   ValidationOutcomeEntity,
@@ -74,6 +75,19 @@ export class PaymentIntentsController {
     @Query() query: QueryPaymentIntentsDto,
   ) {
     return this.paymentIntents.findAll(consumer, query);
+  }
+
+  @Get(':id/transitions')
+  @RequirePermissions('payments:read')
+  @ApiOperation({
+    summary: 'List the status-transition history for a payment intent',
+  })
+  @ApiOkResponse({ type: PaymentIntentTransitionEntity, isArray: true })
+  listTransitions(
+    @CurrentConsumer() consumer: GatewayConsumer,
+    @Param('id') id: string,
+  ) {
+    return this.paymentIntents.listTransitions(consumer, id);
   }
 
   @Get(':id')
