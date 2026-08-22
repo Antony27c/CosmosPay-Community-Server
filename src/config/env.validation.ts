@@ -121,6 +121,15 @@ class EnvironmentVariables {
   @IsInt()
   @Min(1)
   BLINDPAY_TIMEOUT_MS?: number;
+
+  /**
+   * Platform-admin credentials JSON (issue #34). Optional at boot — empty means
+   * admin routes fail closed. Shape:
+   * [{"id":"viewer","secret":"…","role":"read"},{"id":"owner","secret":"…","role":"write"}]
+   */
+  @IsOptional()
+  @IsString()
+  ADMIN_API_CREDENTIALS?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

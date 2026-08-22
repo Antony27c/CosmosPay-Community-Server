@@ -1,3 +1,5 @@
+import { timingSafeEqual } from 'node:crypto';
+
 /**
  * Executable spec for platform-admin auth (issue #34).
  *
@@ -22,10 +24,7 @@ export interface AdminPrincipal {
 }
 
 /** Role lattice: write implies read. */
-export function roleSatisfies(
-  have: AdminRole,
-  need: AdminRole,
-): boolean {
+export function roleSatisfies(have: AdminRole, need: AdminRole): boolean {
   if (need === 'read') return have === 'read' || have === 'write';
   return have === 'write';
 }
@@ -35,7 +34,9 @@ export function roleSatisfies(
  * Expected shape: [{"id":"viewer","secret":"…","role":"read"}, …]
  * Invalid / empty input ⇒ [] (fail closed).
  */
-export function parseAdminCredentials(raw: string | undefined): AdminCredential[] {
+export function parseAdminCredentials(
+  raw: string | undefined,
+): AdminCredential[] {
   if (!raw || !raw.trim()) return [];
   try {
     const parsed: unknown = JSON.parse(raw);
@@ -73,8 +74,6 @@ export function verifyAdminBearer(
   let matched: AdminPrincipal | null = null;
   for (const cred of credentials) {
     if (timingSafeEqualString(token, cred.secret)) {
-      // First match wins; keep scanning so runtime is closer to constant
-      // across positions (best-effort — Node has no secret-index API).
       matched ??= { id: cred.id, role: cred.role };
     }
   }
@@ -93,15 +92,10 @@ function timingSafeEqualString(a: string, b: string): boolean {
   const ab = Buffer.from(a);
   const bb = Buffer.from(b);
   if (ab.length !== bb.length) {
-    // Still touch both buffers so length leaks are the only branch.
     const padded = Buffer.alloc(ab.length);
     bb.copy(padded);
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { timingSafeEqual } = require('node:crypto') as typeof import('node:crypto');
     timingSafeEqual(ab, padded);
     return false;
   }
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { timingSafeEqual } = require('node:crypto') as typeof import('node:crypto');
   return timingSafeEqual(ab, bb);
 }
