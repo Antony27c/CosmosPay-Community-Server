@@ -47,15 +47,32 @@ export function isTerminalStatus(
 /**
  * Asserts that a transition is allowed by the graph and by evidence rules.
  * Throws {@link InvalidPaymentIntentTransitionError} on any violation.
- *
- * TDD note: implemented in the green step after the matrix suite is red.
  */
 export function assertTransition(
   from: PaymentIntentStatusName,
   to: PaymentIntentStatusName,
   evidence: TransitionEvidence = {},
 ): void {
-  throw new Error(
-    `assertTransition not implemented (${from} → ${to}, evidence=${JSON.stringify(evidence)}, successRequiresTxHash=${SUCCESS_REQUIRES_TX_HASH})`,
-  );
+  if (!canTransition(from, to)) {
+    const reason = isTerminalStatus(from)
+      ? `status ${from} is terminal and cannot be abandoned`
+      : `transition is not declared in the payment intent graph`;
+    throw new InvalidPaymentIntentTransitionError(from, to, reason);
+  }
+
+  if (
+    SUCCESS_REQUIRES_TX_HASH &&
+    to === 'SUCCEEDED' &&
+    !hasTxHash(evidence.txHash)
+  ) {
+    throw new InvalidPaymentIntentTransitionError(
+      from,
+      to,
+      'SUCCEEDED requires a non-empty on-chain txHash',
+    );
+  }
+}
+
+function hasTxHash(txHash: string | null | undefined): boolean {
+  return typeof txHash === 'string' && txHash.trim().length > 0;
 }
