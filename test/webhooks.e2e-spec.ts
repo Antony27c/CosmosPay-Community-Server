@@ -28,6 +28,9 @@ describe('Webhooks CRUD (e2e)', () => {
         .fn()
         .mockResolvedValue({ id: 'c1', apisixUsername: 'cosmos_u1' }),
     },
+    requestLog: {
+      create: jest.fn().mockResolvedValue({ id: 'rl_1' }),
+    },
     webhookEndpoint: {
       create: jest.fn(({ data }: any) => {
         const row = {
@@ -89,7 +92,8 @@ describe('Webhooks CRUD (e2e)', () => {
   const gw = (r: request.Test) =>
     r
       .set('x-gateway-secret', 'topsecret')
-      .set('x-consumer-username', 'cosmos_u1');
+      .set('x-consumer-username', 'cosmos_u1')
+      .set('x-consumer-permissions', 'webhooks:read,webhooks:write');
 
   let id: string;
 

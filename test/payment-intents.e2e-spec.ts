@@ -22,21 +22,33 @@ describe('Payment intents CRUD (e2e)', () => {
 
   // Minimal in-memory store keyed by id.
   const store = new Map<string, any>();
+  const transitions: any[] = [];
   let seq = 0;
 
-  const prismaMock = {
+  const prismaMock: any = {
     onModuleInit: jest.fn(),
     onModuleDestroy: jest.fn(),
     $connect: jest.fn(),
     $disconnect: jest.fn(),
-    $transaction: (ops: Promise<unknown>[]) => Promise.all(ops),
+    $transaction: async (arg: any) => {
+      if (typeof arg === 'function') return arg(prismaMock);
+      return Promise.all(arg);
+    },
     consumer: {
       upsert: jest
         .fn()
         .mockResolvedValue({ id: 'c1', apisixUsername: 'cosmos_u1' }),
     },
+    customer: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({ id: 'cust_1' }),
+    },
     // The webhook dispatcher reacts to emitted events; no endpoints registered here.
     webhookEndpoint: { findMany: jest.fn().mockResolvedValue([]) },
+    requestLog: {
+      create: jest.fn().mockResolvedValue({ id: 'rl_1' }),
+    },
+
     paymentIntent: {
       create: jest.fn(({ data }: any) => {
         const row = {
@@ -55,22 +67,54 @@ describe('Payment intents CRUD (e2e)', () => {
       findFirst: jest.fn(({ where }: any) =>
         Promise.resolve(store.get(where.id) ?? null),
       ),
-      // Idempotency lookup by (consumerId, memo).
       findUnique: jest.fn(({ where }: any) => {
+        if (where?.id) {
+          return Promise.resolve(store.get(where.id) ?? null);
+        }
         const memo = where?.consumerId_memo?.memo;
         const found = [...store.values()].find((r) => r.memo === memo);
         return Promise.resolve(found ?? null);
+      }),
+      findUniqueOrThrow: jest.fn(({ where }: any) => {
+        const row = store.get(where.id);
+        if (!row) return Promise.reject(new Error('not found'));
+        return Promise.resolve(row);
       }),
       update: jest.fn(({ where, data }: any) => {
         const row = { ...store.get(where.id), ...data, updatedAt: new Date() };
         store.set(where.id, row);
         return Promise.resolve(row);
       }),
+      updateMany: jest.fn(({ where, data }: any) => {
+        const row = store.get(where.id);
+        if (!row || (where.status && row.status !== where.status)) {
+          return Promise.resolve({ count: 0 });
+        }
+        const next = { ...row, ...data, updatedAt: new Date() };
+        store.set(where.id, next);
+        return Promise.resolve({ count: 1 });
+      }),
       delete: jest.fn(({ where }: any) => {
         const row = store.get(where.id);
         store.delete(where.id);
         return Promise.resolve(row);
       }),
+    },
+    paymentIntentTransition: {
+      create: jest.fn(({ data }: any) => {
+        const row = {
+          id: `tr_${transitions.length + 1}`,
+          createdAt: new Date(),
+          ...data,
+        };
+        transitions.push(row);
+        return Promise.resolve(row);
+      }),
+      findMany: jest.fn(({ where }: any) =>
+        Promise.resolve(
+          transitions.filter((t) => t.intentId === where.intentId),
+        ),
+      ),
     },
   };
 
@@ -133,7 +177,8 @@ describe('Payment intents CRUD (e2e)', () => {
   const gw = (r: request.Test) =>
     r
       .set('x-gateway-secret', 'topsecret')
-      .set('x-consumer-username', 'cosmos_u1');
+      .set('x-consumer-username', 'cosmos_u1')
+      .set('x-consumer-permissions', 'payments:read,payments:write');
 
   let createdId: string;
 
@@ -284,8 +329,17 @@ describe('Payment intents CRUD (e2e)', () => {
         .send({ txHash: 'short' }),
     ).expect(400));
 
-  it('deletes one (200) and then 404s on read', async () => {
-    await gw(request(http()).delete(`${route}/${createdId}`)).expect(200);
-    await gw(request(http()).get(`${route}/${createdId}`)).expect(404);
+  it('deletes an unpaid intent (200) and then 404s on read', async () => {
+    const created = await gw(
+      request(http())
+        .post(txRoute)
+        .send({ source, destination, amount: '1', memo: '888001' }),
+    ).expect(201);
+    await gw(request(http()).delete(`${route}/${created.body.id}`)).expect(200);
+    await gw(request(http()).get(`${route}/${created.body.id}`)).expect(404);
+  });
+
+  it('rejects deleting a SUCCEEDED (paid) intent (400)', async () => {
+    await gw(request(http()).delete(`${route}/${createdId}`)).expect(400);
   });
 });
