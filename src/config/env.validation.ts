@@ -121,6 +121,26 @@ class EnvironmentVariables {
   @IsInt()
   @Min(1)
   BLINDPAY_TIMEOUT_MS?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  WEBHOOK_CONNECT_TIMEOUT_MS?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  WEBHOOK_READ_TIMEOUT_MS?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  WEBHOOK_MAX_RESPONSE_BYTES?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  WEBHOOK_TIMEOUT_MS?: number;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

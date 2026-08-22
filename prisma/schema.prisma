@@ -159,6 +159,11 @@ model WebhookEndpoint {
   secret      String
   description String?
   enabled     Boolean            @default(true)
+  // Set when the URL fails public-destination checks (at register-time audit or
+  // at delivery when DNS rebinds to a private/metadata target). Deliveries skip
+  // blocked endpoints; clear by PATCHing a safe https URL (or re-enabling after
+  // the URL passes validation again).
+  destinationBlocked Boolean     @default(false)
   // Subscribed event types; an empty list means "all events".
   eventTypes  WebhookEventType[]
 
