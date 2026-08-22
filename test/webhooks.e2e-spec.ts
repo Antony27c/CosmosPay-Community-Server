@@ -7,6 +7,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { WebhookDestinationGuard } from '../src/webhooks/webhook-destination.guard';
 
 /**
  * Full CRUD for webhook endpoints behind the APISIX gate. Prisma is mocked with
@@ -33,6 +34,7 @@ describe('Webhooks CRUD (e2e)', () => {
         const row = {
           id: `we_${++seq}`,
           enabled: true,
+          destinationBlocked: false,
           description: null,
           createdAt: new Date(),
           updatedAt: new Date(),
@@ -60,12 +62,20 @@ describe('Webhooks CRUD (e2e)', () => {
       findMany: jest.fn().mockResolvedValue([]),
       count: jest.fn().mockResolvedValue(0),
     },
+    requestLog: {
+      create: jest.fn().mockResolvedValue({}),
+    },
   };
 
   beforeAll(async () => {
+    const destinations = new WebhookDestinationGuard();
+    destinations.replaceDnsLookup(async () => ['93.184.216.34']);
+
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(PrismaService)
       .useValue(prismaMock)
+      .overrideProvider(WebhookDestinationGuard)
+      .useValue(destinations)
       .compile();
 
     app = moduleRef.createNestApplication();
@@ -89,7 +99,9 @@ describe('Webhooks CRUD (e2e)', () => {
   const gw = (r: request.Test) =>
     r
       .set('x-gateway-secret', 'topsecret')
-      .set('x-consumer-username', 'cosmos_u1');
+      .set('x-consumer-username', 'cosmos_u1')
+      .set('x-consumer-role', 'admin')
+      .set('x-consumer-permissions', 'webhooks:read,webhooks:write');
 
   let id: string;
 
@@ -101,6 +113,29 @@ describe('Webhooks CRUD (e2e)', () => {
 
   it('rejects an invalid url (400)', () =>
     gw(request(http()).post(route).send({ url: 'not-a-url' })).expect(400));
+
+  it('rejects a loopback / private / metadata destination (400)', async () => {
+    const loopback = await gw(
+      request(http()).post(route).send({ url: 'https://127.0.0.1/hooks' }),
+    ).expect(400);
+    expect(loopback.body.message).toEqual(expect.stringMatching(/loopback/i));
+
+    const privateRange = await gw(
+      request(http()).post(route).send({ url: 'https://10.0.0.5/hooks' }),
+    ).expect(400);
+    expect(privateRange.body.message).toEqual(
+      expect.stringMatching(/private/i),
+    );
+
+    const metadata = await gw(
+      request(http())
+        .post(route)
+        .send({ url: 'https://169.254.169.254/latest/meta-data' }),
+    ).expect(400);
+    expect(metadata.body.message).toEqual(
+      expect.stringMatching(/link-local|cloud-metadata/i),
+    );
+  });
 
   it('creates an endpoint (201) and returns the signing secret', async () => {
     const res = await gw(
@@ -139,9 +174,11 @@ describe('Webhooks CRUD (e2e)', () => {
   });
 
   it('pings the endpoint (mocked fetch → ok)', async () => {
-    global.fetch = jest
-      .fn()
-      .mockResolvedValue({ ok: true, status: 200 }) as any;
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: null,
+    }) as any;
     const res = await gw(request(http()).post(`${route}/${id}/ping`)).expect(
       201,
     );

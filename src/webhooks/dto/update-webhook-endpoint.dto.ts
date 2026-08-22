@@ -16,7 +16,11 @@ export class UpdateWebhookEndpointDto {
     example: 'https://integrator.example.com/webhooks/cosmos',
   })
   @IsOptional()
-  @IsUrl({ require_tld: false, require_protocol: true })
+  @IsUrl({
+    require_tld: false,
+    require_protocol: true,
+    protocols: ['https'],
+  })
   url?: string;
 
   @ApiPropertyOptional()
