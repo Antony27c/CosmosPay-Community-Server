@@ -3,7 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ReceiversService } from '../kyc/receivers/receivers.service';
 import { RequestTosDto } from '../kyc/receivers/dto/request-tos.dto';
 import type { AdminPrincipal } from './admin-auth';
-import { toAuditData } from './admin-audit.service';
+import { toAuditData, recordAuditInTransaction } from './admin-audit.service';
 
 /** Clamp a requested page size to a sane range. */
 function take(n?: number): number {
@@ -333,11 +333,12 @@ export class AdminService {
         data: { disabled },
         include: consumerSelect,
       });
-      await tx.adminAuditLog.create({
-        data: toAuditData(actor, 'receivers.setAccess', 'receiver', id, {
+      await recordAuditInTransaction(
+        tx,
+        toAuditData(actor, 'receivers.setAccess', 'receiver', id, {
           disabled,
         }),
-      });
+      );
       return result;
     });
   }

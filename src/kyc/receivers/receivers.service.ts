@@ -16,6 +16,7 @@ import {
 import { asString, toJson } from '../../blindpay/blindpay.util';
 import type { BlindpayReceiver } from '../../../generated/prisma/client';
 import type { AdminAuditData } from '../../admin/admin-audit.service';
+import { recordAuditInTransaction } from '../../admin/admin-audit.service';
 import { CreateReceiverDto } from './dto/create-receiver.dto';
 import { UpdateReceiverDto } from './dto/update-receiver.dto';
 import { RequestTosDto } from './dto/request-tos.dto';
@@ -123,7 +124,7 @@ export class ReceiversService {
         data: { kycStatus: 'pending_user', tosSentAt: new Date() },
       });
       if (audit) {
-        await tx.adminAuditLog.create({ data: audit });
+        await recordAuditInTransaction(tx, audit);
       }
       return { receiver, url, email: row.email };
     });
@@ -220,7 +221,7 @@ export class ReceiversService {
         });
       }
       if (audit) {
-        await tx.adminAuditLog.create({ data: audit });
+        await recordAuditInTransaction(tx, audit);
       }
       return { url, email: row.email, channel };
     });
@@ -255,7 +256,7 @@ export class ReceiversService {
       const refreshed = await this.refreshReceiver(row);
       if (audit) {
         await this.prisma.$transaction(async (tx) => {
-          await tx.adminAuditLog.create({ data: audit });
+          await recordAuditInTransaction(tx, audit);
         });
       }
       return refreshed;
@@ -280,7 +281,7 @@ export class ReceiversService {
         data: { blindpayId: asString(created.id) },
       });
       if (audit) {
-        await tx.adminAuditLog.create({ data: audit });
+        await recordAuditInTransaction(tx, audit);
       }
     });
     return this.sync.mirrorReceiver(row.consumerId, created);

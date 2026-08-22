@@ -38,17 +38,25 @@ export function toAuditData(
   };
 }
 
+/** Insert an audit row using an interactive-transaction client. */
+export function recordAuditInTransaction(
+  tx: Prisma.TransactionClient,
+  data: AdminAuditData,
+) {
+  return tx.adminAuditLog.create({ data });
+}
+
 /**
  * Append-only platform-admin audit trail (issue #34).
  * There is intentionally no delete/update API — rows are immutable history.
- * Prefer writing via {@link recordWith} inside the same `$transaction` as the
+ * Prefer {@link recordAuditInTransaction} inside the same `$transaction` as the
  * mutation it describes so the two cannot diverge.
  */
 @Injectable()
 export class AdminAuditService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Standalone insert (prefer transactional {@link recordWith} for mutations). */
+  /** Standalone insert (prefer {@link recordAuditInTransaction} for mutations). */
   async record(input: RecordAdminAuditInput) {
     return this.prisma.adminAuditLog.create({
       data: toAuditData(
@@ -59,14 +67,6 @@ export class AdminAuditService {
         input.metadata,
       ),
     });
-  }
-
-  /** Insert using an interactive-transaction client. */
-  async recordWith(
-    tx: Prisma.TransactionClient,
-    data: AdminAuditData,
-  ) {
-    return tx.adminAuditLog.create({ data });
   }
 
   async list(opts: { take?: number; skip?: number } = {}) {
