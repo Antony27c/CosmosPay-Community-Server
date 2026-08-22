@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -22,6 +23,7 @@ import { StellarService } from '../stellar/stellar.service';
 import type {
   PaymentIntent,
   PaymentIntentStatus,
+  PaymentIntentTransition,
   WebhookEventType,
 } from '../../generated/prisma/client';
 import { WEBHOOK_EVENT, WebhookEventPayload } from '../webhooks/webhook-events';
@@ -29,7 +31,28 @@ import { CreateTxPaymentIntentDto } from './dto/create-tx-payment-intent.dto';
 import { CreatePayPaymentIntentDto } from './dto/create-pay-payment-intent.dto';
 import { QueryPaymentIntentsDto } from './dto/query-payment-intents.dto';
 import { UpdatePaymentIntentDto } from './dto/update-payment-intent.dto';
+import {
+  assertTransition,
+  InvalidPaymentIntentTransitionError,
+} from './payment-intent-state-machine';
+import type { PaymentIntentStatusName } from './payment-intent-transitions';
 import { StellarVerifierService } from './stellar-verifier.service';
+
+/** Who triggered a status change — stored on the audit row. */
+export type PaymentIntentTransitionActor =
+  | 'api'
+  | 'validate'
+  | 'observer'
+  | 'system';
+
+export interface TransitionOptions {
+  consumerUsername: string;
+  actor: PaymentIntentTransitionActor;
+  reason?: string;
+  txHash?: string;
+  /** On-chain payer for PAY intents settled by observer/validate. */
+  payer?: string;
+}
 
 export interface ValidationOutcome {
   valid: boolean;
@@ -383,28 +406,140 @@ export class PaymentIntentsService {
     // Authorize ownership before mutating.
     await this.assertOwned(consumer, id);
 
+    // Status changes must go through the single guarded transition entry point.
+    if (dto.status) {
+      const updated = await this.transition(id, dto.status, {
+        consumerUsername: consumer.username,
+        actor: 'api',
+        reason: 'PATCH /payment-intents/:id',
+        txHash: dto.txHash,
+      });
+      // Non-status fields can still be patched alongside a status change.
+      if (dto.reference !== undefined && dto.reference !== updated.reference) {
+        const patched = await this.prisma.paymentIntent.update({
+          where: { id },
+          data: { reference: dto.reference },
+        });
+        return this.withQr(patched);
+      }
+      return this.withQr(updated);
+    }
+
     const updated = await this.prisma.paymentIntent.update({
       where: { id },
       data: {
-        ...(dto.status ? { status: dto.status } : {}),
         ...(dto.txHash !== undefined ? { txHash: dto.txHash } : {}),
         ...(dto.reference !== undefined ? { reference: dto.reference } : {}),
       },
     });
 
     this.logger.log(
-      `Updated payment intent ${id} (consumer=${consumer.username}): ` +
-        `${dto.status ?? 'status unchanged'}`,
+      `Updated payment intent ${id} (consumer=${consumer.username}): status unchanged`,
     );
 
-    // Notify integrators: a status change maps to a specific event, otherwise
-    // it's a generic update (e.g. txHash/reference attached).
-    this.emit(
-      consumer.username,
-      dto.status ? this.statusEvent(dto.status) : 'PAYMENT_INTENT_UPDATED',
-      updated,
-    );
+    this.emit(consumer.username, 'PAYMENT_INTENT_UPDATED', updated);
     return this.withQr(updated);
+  }
+
+  /**
+   * Single status-transition entry point for payment intents (issue #36).
+   * Validates the declared graph, requires on-chain evidence for SUCCEEDED,
+   * applies an optimistic `status` guard in the UPDATE, and appends an audit row.
+   */
+  async transition(
+    intentId: string,
+    to: PaymentIntentStatus,
+    opts: TransitionOptions,
+  ): Promise<PaymentIntent> {
+    const current = await this.prisma.paymentIntent.findUnique({
+      where: { id: intentId },
+    });
+    if (!current) {
+      throw new NotFoundException(`Payment intent ${intentId} not found`);
+    }
+
+    const from = current.status as PaymentIntentStatusName;
+    const toStatus = to as PaymentIntentStatusName;
+    const txHash = opts.txHash ?? current.txHash ?? undefined;
+
+    try {
+      assertTransition(from, toStatus, { txHash });
+    } catch (err) {
+      if (err instanceof InvalidPaymentIntentTransitionError) {
+        throw new BadRequestException({
+          statusCode: 400,
+          error: 'Bad Request',
+          code: err.code,
+          message: err.message,
+          from: err.from,
+          to: err.to,
+        });
+      }
+      throw err;
+    }
+
+    // For PAY intents the payer is unknown until settlement — record the actual
+    // on-chain source so the payment is attributable (and customer stats line up).
+    const setSource =
+      opts.payer && !current.source ? { source: opts.payer } : {};
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const guarded = await tx.paymentIntent.updateMany({
+        where: { id: intentId, status: current.status },
+        data: {
+          status: to,
+          ...(txHash !== undefined ? { txHash } : {}),
+          ...setSource,
+        },
+      });
+      if (guarded.count === 0) {
+        throw new ConflictException(
+          `Payment intent ${intentId} status changed concurrently; expected ${from}`,
+        );
+      }
+
+      await tx.paymentIntentTransition.create({
+        data: {
+          intentId,
+          fromStatus: current.status,
+          toStatus: to,
+          txHash: txHash ?? null,
+          actor: opts.actor,
+          reason: opts.reason ?? null,
+        },
+      });
+
+      return tx.paymentIntent.findUniqueOrThrow({ where: { id: intentId } });
+    });
+
+    this.logger.log(
+      `Payment intent ${intentId} transition ${from} → ${to}` +
+        (txHash ? ` (tx=${txHash})` : '') +
+        ` actor=${opts.actor}`,
+    );
+    this.emit(opts.consumerUsername, this.statusEvent(to), updated);
+
+    if (to === 'SUCCEEDED') {
+      void this.upsertCustomerFromPayment(updated, opts.payer).catch((err) =>
+        this.logger.warn(
+          `Could not auto-create customer for intent ${intentId}: ${String(err)}`,
+        ),
+      );
+    }
+
+    return updated;
+  }
+
+  /** Consultable audit trail for a single intent (scoped to the consumer). */
+  async listTransitions(
+    consumer: GatewayConsumer,
+    id: string,
+  ): Promise<PaymentIntentTransition[]> {
+    await this.assertOwned(consumer, id);
+    return this.prisma.paymentIntentTransition.findMany({
+      where: { intentId: id },
+      orderBy: { createdAt: 'asc' },
+    });
   }
 
   // ── DELETE ────────────────────────────────────────────────────────────────
@@ -499,30 +634,15 @@ export class PaymentIntentsService {
     consumerUsername: string,
     txHash: string,
     payer?: string,
+    actor: PaymentIntentTransitionActor = 'validate',
   ): Promise<PaymentIntent> {
-    // For PAY intents the payer is unknown until settlement — record the actual
-    // on-chain source so the payment is attributable (and customer stats line up).
-    const current = await this.prisma.paymentIntent.findUnique({
-      where: { id: intentId },
-      select: { source: true },
+    return this.transition(intentId, 'SUCCEEDED', {
+      consumerUsername,
+      actor,
+      reason: 'on-chain payment confirmed',
+      txHash,
+      payer,
     });
-    const setSource = payer && !current?.source ? { source: payer } : {};
-    const updated = await this.prisma.paymentIntent.update({
-      where: { id: intentId },
-      data: { status: 'SUCCEEDED', txHash, ...setSource },
-    });
-    this.logger.log(
-      `Payment intent ${intentId} confirmed on-chain (tx=${txHash})`,
-    );
-    this.emit(consumerUsername, 'PAYMENT_INTENT_SUCCEEDED', updated);
-    // Best-effort: a successful payment yields a customer (the payer). Never let
-    // a customer write affect the payment outcome.
-    void this.upsertCustomerFromPayment(updated, payer).catch((err) =>
-      this.logger.warn(
-        `Could not auto-create customer for intent ${intentId}: ${String(err)}`,
-      ),
-    );
-    return updated;
   }
 
   /**
@@ -559,28 +679,27 @@ export class PaymentIntentsService {
     intentId: string,
     consumerUsername: string,
     txHash?: string,
+    actor: PaymentIntentTransitionActor = 'validate',
   ): Promise<PaymentIntent> {
-    const updated = await this.prisma.paymentIntent.update({
-      where: { id: intentId },
-      data: { status: 'FAILED', ...(txHash ? { txHash } : {}) },
+    return this.transition(intentId, 'FAILED', {
+      consumerUsername,
+      actor,
+      reason: 'on-chain payment failed or rejected',
+      txHash,
     });
-    this.emit(consumerUsername, 'PAYMENT_INTENT_FAILED', updated);
-    return updated;
   }
 
   /** Finalizes an unpaid, past-lifetime intent as EXPIRED. Reused by the observer. */
   async markExpired(
     intentId: string,
     consumerUsername: string,
+    actor: PaymentIntentTransitionActor = 'observer',
   ): Promise<PaymentIntent> {
-    const updated = await this.prisma.paymentIntent.update({
-      where: { id: intentId },
-      data: { status: 'EXPIRED' },
+    return this.transition(intentId, 'EXPIRED', {
+      consumerUsername,
+      actor,
+      reason: 'intent lifetime elapsed before settlement',
     });
-    this.logger.log(`Payment intent ${intentId} expired (past its lifetime)`);
-    // No dedicated EXPIRED event type — surfaced as a generic update.
-    this.emit(consumerUsername, 'PAYMENT_INTENT_UPDATED', updated);
-    return updated;
   }
 
   /** Throws 404 unless the intent exists and belongs to the consumer. */

@@ -123,6 +123,7 @@ export class StellarObserverService implements OnModuleInit, OnModuleDestroy {
         intent.consumer.apisixUsername,
         result.txHash,
         result.payer,
+        'observer',
       );
     }
   }

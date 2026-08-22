@@ -272,3 +272,39 @@ export class DeletedEntity {
   @ApiProperty({ example: true })
   deleted!: boolean;
 }
+
+export class PaymentIntentTransitionEntity {
+  @ApiProperty({ example: 'clxtransition0001' })
+  id!: string;
+
+  @ApiProperty({ example: 'clx9z8a1b0000abcd1234efgh' })
+  intentId!: string;
+
+  @ApiProperty({ enum: PaymentIntentStatus, example: 'PENDING' })
+  fromStatus!: PaymentIntentStatus;
+
+  @ApiProperty({ enum: PaymentIntentStatus, example: 'SUBMITTED' })
+  toStatus!: PaymentIntentStatus;
+
+  @ApiProperty({
+    required: false,
+    nullable: true,
+    example: '3389e9f0…',
+  })
+  txHash!: string | null;
+
+  @ApiProperty({ example: 'api', description: 'api | validate | observer | system' })
+  actor!: string;
+
+  @ApiProperty({ required: false, nullable: true })
+  reason!: string | null;
+
+  @ApiProperty()
+  createdAt!: Date;
+}
+
+export class PaymentIntentTransitionListEntity {
+  @ApiProperty({ type: [PaymentIntentTransitionEntity] })
+  // Returned as a bare array from the controller; Swagger documents the item shape.
+  data!: PaymentIntentTransitionEntity[];
+}
