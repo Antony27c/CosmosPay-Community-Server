@@ -624,3 +624,22 @@ model LiquidityPoolOperation {
   @@index([poolId])
   @@map("liquidity_pool_operation")
 }
+
+// ---------------------------------------------------------------------------
+// Platform-admin audit trail (issue #34). Append-only: no update/delete API.
+// ---------------------------------------------------------------------------
+model AdminAuditLog {
+  id           String   @id @default(cuid())
+  actorId      String
+  actorRole    String
+  action       String
+  resourceType String
+  resourceId   String
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([actorId])
+  @@index([resourceType, resourceId])
+  @@map("admin_audit_log")
+}
