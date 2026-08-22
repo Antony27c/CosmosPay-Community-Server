@@ -4,20 +4,26 @@ import {
   ForbiddenException,
   Injectable,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
+import { AppConfig } from '../../config/configuration';
 
 /**
- * Guards the platform-admin (global, cross-consumer) endpoints. ApisixGuard has
- * already proven the request came through the gateway (valid X-Gateway-Secret); this
- * additionally requires the trusted `X-Cosmos-Admin` marker. That header is **stripped
- * from any client request by APISIX** (it's on the route's proxy-rewrite remove list)
- * and is set ONLY by the dev platform's server-to-server admin proxy, which first
- * verifies the signed-in user is a platform owner/admin. So an external API-key caller
- * can never reach these unscoped, see-everything endpoints — only the owner console can.
+ * TEMP (TDD red): constructor accepts Config/Reflector for the new API, but
+ * behaviour is still the legacy plaintext `X-Cosmos-Admin: 1` check so the
+ * issue #34 suite fails until the green implementation lands.
  */
 @Injectable()
 export class AdminGuard implements CanActivate {
+  constructor(
+    private readonly config: ConfigService<AppConfig, true>,
+    private readonly reflector: Reflector,
+  ) {}
+
   canActivate(context: ExecutionContext): boolean {
+    void this.config;
+    void this.reflector;
     const request = context.switchToHttp().getRequest<Request>();
     const raw = request.headers['x-cosmos-admin'];
     const value = Array.isArray(raw) ? raw[0] : raw;
