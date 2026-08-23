@@ -2,6 +2,11 @@
 
 All notable changes to the Cosmos Pay Community Server are documented here.
 Generated from [Conventional Commits](https://www.conventionalcommits.org) by [git-cliff](https://git-cliff.org).
+## [0.0.4] - 2026-08-23
+
+### Bug Fixes
+- Guard submit/observer so liquidated ops stay SUCCEEDED (94f0f68)
+
 ## [0.0.3] - 2026-08-23
 
 ### Features
