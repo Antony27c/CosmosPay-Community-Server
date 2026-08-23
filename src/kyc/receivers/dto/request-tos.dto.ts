@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString } from 'class-validator';
+import { IsIn, IsOptional } from 'class-validator';
+import { IsRedirectUrl } from '../../../common/validators/is-redirect-url.validator';
 
 /**
  * Requests a terms-of-service acceptance link for a receiver. A receiver is created
@@ -22,8 +23,8 @@ export class RequestTosDto {
   @ApiProperty({
     example: 'https://yourapp.com/kyc/return',
     description:
-      'Where BlindPay redirects after acceptance (gets ?tos_id=...).',
+      'Where BlindPay redirects after acceptance (gets ?tos_id=...). Must be https and on the consumer allow-list.',
   })
-  @IsString()
+  @IsRedirectUrl()
   redirect_url!: string;
 }

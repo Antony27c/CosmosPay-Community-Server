@@ -1,9 +1,13 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import { BlindpayClient, UploadableFile } from '../../blindpay/blindpay.client';
 import { BlindpayObject } from '../../blindpay/blindpay-sync.service';
 import { UPLOAD_BUCKETS } from '../../blindpay/blindpay.constants';
 import { InitiateTosDto } from './dto/initiate-tos.dto';
+import type { AppConfig } from '../../config/configuration';
+import { GatewayConsumer } from '../../common/interfaces/gateway-consumer.interface';
+import { assertRedirectAllowed } from '../redirect-url-whitelist';
 
 /**
  * Compliance helpers that aren't tied to a single receiver: document upload and
@@ -12,7 +16,10 @@ import { InitiateTosDto } from './dto/initiate-tos.dto';
  */
 @Injectable()
 export class KycMetaService {
-  constructor(private readonly blindpay: BlindpayClient) {}
+  constructor(
+    private readonly blindpay: BlindpayClient,
+    private readonly config: ConfigService<AppConfig, true>,
+  ) {}
 
   /**
    * Uploads a KYC document and returns its `file_url`, which the caller then
@@ -42,7 +49,15 @@ export class KycMetaService {
    * query param afterwards — required to create a receiver. This route lives at
    * `/e/instances/{id}/tos`, outside the normal instance path.
    */
-  initiateTos(dto: InitiateTosDto): Promise<{ url: string }> {
+  initiateTos(
+    consumer: GatewayConsumer,
+    dto: InitiateTosDto,
+  ): Promise<{ url: string }> {
+    assertRedirectAllowed(
+      consumer.username,
+      dto.redirect_url,
+      this.config.get('kyc', { infer: true }).redirectUrlWhitelist,
+    );
     return this.blindpay.post<{ url: string }>(
       `/e/instances/${this.blindpay.instanceId}/tos`,
       {
