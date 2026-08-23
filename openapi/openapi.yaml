@@ -3608,6 +3608,7 @@ components:
           type: string
           example: https://dev.cosmospay.lat/kyc/return/org/dev/clz9xreceiver01
           description: Where BlindPay redirects the customer after they accept the terms.
+            Must be https and on the consumer allow-list.
       required:
         - redirect_url
     RequestTosDto:
@@ -3624,7 +3625,8 @@ components:
         redirect_url:
           type: string
           example: https://yourapp.com/kyc/return
-          description: Where BlindPay redirects after acceptance (gets ?tos_id=...).
+          description: Where BlindPay redirects after acceptance (gets ?tos_id=...). Must
+            be https and on the consumer allow-list.
       required:
         - redirect_url
     EnableReceiverDto:
@@ -4057,7 +4059,8 @@ components:
         redirect_url:
           type: string
           example: https://yourapp.com/kyc/return
-          description: Where BlindPay redirects after acceptance (gets ?tos_id=...).
+          description: Where BlindPay redirects after acceptance (gets ?tos_id=...). Must
+            be https and on the consumer allow-list.
         receiver_id:
           type: string
           description: Existing receiver to (re)accept updated terms for.
