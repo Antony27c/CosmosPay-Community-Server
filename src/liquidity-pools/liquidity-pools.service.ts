@@ -590,9 +590,11 @@ export class LiquidityPoolsService {
    * Relays the signed transaction to the network. The signed envelope must be
    * the one we built (hash-verified against the stored operation). A network
    * rejection finalizes the operation as FAILED **only if it is still
-   * in-flight** — a concurrent observer that already marked it SUCCEEDED (and
-   * captured cost basis) must not be overwritten. An unreachable network is a
-   * 503 and leaves it re-submittable.
+   * in-flight and the tx is not already successful on-chain** — Horizon may
+   * return result codes (e.g. `tx_already_included`) for a duplicate/SEP-7
+   * broadcast of a liquidated tx before the observer ticks, so we confirm
+   * settlement by hash first. An unreachable network is a 503 and leaves it
+   * re-submittable.
    */
   async submit(
     consumer: GatewayConsumer,
@@ -674,10 +676,38 @@ export class LiquidityPoolsService {
     } catch (err) {
       const resultCodes = this.extractResultCodes(err);
       if (resultCodes) {
+        // Horizon can return result codes for a tx that is already included
+        // (e.g. tx_already_included from a duplicate / SEP-7 broadcast) *before*
+        // the observer has marked the row SUCCEEDED. Confirm settlement by
+        // hash — same lookup the observer uses — before degrading, otherwise
+        // we emit LIQUIDITY_FAILED and return a false FAILED response for a
+        // liquidated operation (later healed by the observer → contradictory
+        // webhooks).
+        const settlement = await this.lookupSettlement(
+          op.network as StellarNetwork,
+          op.txHash,
+        );
+        if (settlement === 'succeeded') {
+          const succeeded = await this.finalizeSucceeded(
+            op.id,
+            consumer.username,
+            op.txHash,
+          );
+          this.logger.log(
+            `LP operation ${op.id} Horizon rejection reconciled to SUCCEEDED (tx already on-chain)`,
+          );
+          return {
+            submitted: true,
+            status: 'SUCCEEDED',
+            txHash: succeeded.operation.txHash,
+            operation: await this.withQr(succeeded.operation),
+          };
+        }
+
         const failed = await this.finalizeFailed(op.id, consumer.username);
         if (failed.operation.status === 'SUCCEEDED') {
-          // Observer already settled this tx on-chain. Do not report failure
-          // and do not touch the captured cost basis.
+          // Observer settled the row during our Horizon lookup. Do not report
+          // failure and do not touch the captured cost basis.
           this.logger.log(
             `LP operation ${op.id} Horizon rejection ignored; already SUCCEEDED`,
           );
@@ -1174,6 +1204,31 @@ export class LiquidityPoolsService {
       throw new NotFoundException(`Liquidity pool operation ${id} not found`);
     }
     return op;
+  }
+
+  /**
+   * Looks a transaction up by hash on Horizon (same approach as the settlement
+   * observer). Used by submit to distinguish a true rejection from a duplicate
+   * submit of an already-included tx before writing FAILED.
+   */
+  private async lookupSettlement(
+    network: StellarNetwork,
+    txHash: string,
+  ): Promise<'succeeded' | 'failed' | 'unsettled'> {
+    try {
+      const tx = await this.stellar
+        .server(network)
+        .transactions()
+        .transaction(txHash)
+        .call();
+      return tx.successful ? 'succeeded' : 'failed';
+    } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response
+        ?.status;
+      if (status === 404) return 'unsettled';
+      this.logger.warn(`Horizon lookup failed for LP tx ${txHash}`);
+      return 'unsettled';
+    }
   }
 
   /** Pulls Horizon's transaction/operation result codes off a failed submit. */

@@ -511,6 +511,54 @@ describe('LiquidityPoolsService.submit vs observer (issue #32 race)', () => {
     expect(basis.costA).toBe(toStroops('1000'));
   });
 
+  it('reconciles to SUCCEEDED when Horizon reports inclusion before the observer has run', async () => {
+    // Reverse ordering from the case above: submit gets tx_already_included
+    // (or any result-coded error) while the row is still SUBMITTED. Looking the
+    // hash up on Horizon shows the tx succeeded, so we must not finalize FAILED
+    // or emit LIQUIDITY_FAILED / return a false FAILED response.
+    const row = depositRow({ status: 'PENDING' });
+    prisma.rows.push(row);
+
+    stellar.submitTransaction.mockRejectedValue(
+      horizonReject({ transaction: 'tx_already_included' }),
+    );
+    stellar.txCall.mockResolvedValue({ successful: true });
+
+    const outcome = await service.submit(consumer, row.id, 'signed-xdr');
+
+    expect(outcome.status).toBe('SUCCEEDED');
+    expect(outcome.submitted).toBe(true);
+    expect(row.status).toBe('SUCCEEDED');
+    expect(row.sharesReceived).toBe('100');
+    expect(row.settledAmountA).toBe('1000');
+    expect(row.settledAmountB).toBe('100');
+
+    const failedEmits = (events.emit as jest.Mock).mock.calls.filter(
+      (call) => call[1]?.type === 'LIQUIDITY_FAILED',
+    );
+    expect(failedEmits).toHaveLength(0);
+
+    const basis = await (service as any).costBasis('c1', SOURCE, POOL_ID);
+    expect(basis.remainingShares).toBe(toStroops('100'));
+  });
+
+  it('still reports FAILED when Horizon result codes reflect a real rejection (tx not on-chain)', async () => {
+    const row = depositRow({ status: 'PENDING' });
+    prisma.rows.push(row);
+
+    stellar.submitTransaction.mockRejectedValue(
+      horizonReject({ transaction: 'tx_bad_auth' }),
+    );
+    stellar.txCall.mockRejectedValue({ response: { status: 404 } });
+
+    const outcome = await service.submit(consumer, row.id, 'signed-xdr');
+
+    expect(outcome.status).toBe('FAILED');
+    expect(outcome.submitted).toBe(false);
+    expect(row.status).toBe('FAILED');
+    expect(row.sharesReceived).toBeNull();
+  });
+
   it('observer FAILED must not overwrite a row submit already marked SUCCEEDED', async () => {
     const row = depositRow({
       status: 'SUCCEEDED',
