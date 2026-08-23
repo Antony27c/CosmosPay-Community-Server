@@ -123,6 +123,20 @@ Two paths use that single rule:
   statuses change and events fire **without anyone calling the API**. Disable for
   local dev with `OBSERVER_ENABLED=false`.
 
+### API request logs retention
+
+Every inbound request (except `/v1/health`, `/docs`, and traffic marked
+`x-cosmos-internal`) is appended to `request_log` by `LoggingInterceptor`, and
+powers the dashboard **API logs** view (`GET /v1/logs`). Rows include path,
+status, duration, and — when present — the payer's `ip` / `userAgent`.
+
+Those rows are **not kept forever**. `RequestLogRetentionService` deletes rows
+older than `REQUEST_LOG_RETENTION_DAYS` (default **30**) on a timer
+(`REQUEST_LOG_PRUNE_INTERVAL_MS`, default **1h**), in bounded batches so a prune
+cycle never holds a long lock on the table. Set `REQUEST_LOG_RETENTION_DAYS=0`
+to disable the prune entirely (the service logs that at boot). The composite
+index on `(consumer, createdAt)` keeps the dashboard query fast as volume grows.
+
 ### Webhooks (notifying integrators)
 
 Each integrator (APISIX consumer) registers one or more webhook endpoints. When a
