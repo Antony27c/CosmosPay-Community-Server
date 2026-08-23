@@ -34,6 +34,16 @@ function horizonReject(codes: { transaction?: string; operations?: string[] }) {
   return err;
 }
 
+function applyUpdateData(row: any, data: any): void {
+  const next = { ...data };
+  if (next.settlementEpoch?.increment != null) {
+    row.settlementEpoch =
+      (row.settlementEpoch ?? 0) + next.settlementEpoch.increment;
+    delete next.settlementEpoch;
+  }
+  Object.assign(row, next);
+}
+
 function matchesWhere(row: any, where: any): boolean {
   if (!where) return true;
   if (where.id && where.id !== row.id) return false;
@@ -131,7 +141,7 @@ function createPrisma(seed: any[] = []) {
       }),
       updateMany: jest.fn(async ({ where, data }: any) => {
         const matched = rows.filter((r) => matchesWhere(r, where));
-        for (const row of matched) Object.assign(row, data);
+        for (const row of matched) applyUpdateData(row, data);
         return { count: matched.length };
       }),
     },
@@ -196,6 +206,7 @@ function swapRow(overrides: Record<string, unknown> = {}): any {
     xdr: 'AAAA',
     uri: 'web+stellar:tx?xdr=AAAA',
     txHash: TX_HASH,
+    settlementEpoch: 0,
     expiresAt: new Date(Date.now() + 60_000),
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -301,5 +312,24 @@ describe('SwapsService.submit vs observer (issue #29 double terminal event)', ()
 
     expect([a.applied, b.applied].filter(Boolean)).toHaveLength(1);
     expect(terminalEmits(events, 'SWAP_SUCCEEDED')).toHaveLength(1);
+  });
+
+  it('emits SWAP_FAILED again after a valid resubmit from FAILED', async () => {
+    const row = swapRow({ status: 'PENDING' });
+    prisma.rows.push(row);
+
+    await service.finalizeFailed(row.id, consumer.username);
+    expect(row.status).toBe('FAILED');
+    expect(terminalEmits(events, 'SWAP_FAILED')).toHaveLength(1);
+
+    stellar.submitTransaction.mockRejectedValue(
+      horizonReject({ transaction: 'tx_bad_auth' }),
+    );
+    const outcome = await service.submit(consumer, row.id, 'signed-xdr');
+
+    expect(outcome.status).toBe('FAILED');
+    expect(row.status).toBe('FAILED');
+    expect(row.settlementEpoch).toBe(1);
+    expect(terminalEmits(events, 'SWAP_FAILED')).toHaveLength(2);
   });
 });

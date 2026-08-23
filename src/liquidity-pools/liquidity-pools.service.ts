@@ -35,7 +35,6 @@ import {
   proportionalShare,
 } from './lp-math';
 import {
-  LP_CAN_SUBMIT_STATUSES,
   LP_CAN_SUCCEED_STATUSES,
   LP_IN_FLIGHT_STATUSES,
   type LpOperationStatus,
@@ -631,9 +630,7 @@ export class LiquidityPoolsService {
       );
     }
 
-    const submitted = await this.guardedUpdate(op.id, LP_CAN_SUBMIT_STATUSES, {
-      status: 'SUBMITTED',
-    });
+    const submitted = await this.markSubmitted(op.id);
     // Observer may have liquidated the row between our read and this write.
     if (submitted.operation.status === 'SUCCEEDED') {
       return {
@@ -773,6 +770,27 @@ export class LiquidityPoolsService {
         where: { id },
       });
     return { applied: result.count > 0, operation };
+  }
+
+  /**
+   * PENDING → SUBMITTED keeps the epoch (same settlement attempt).
+   * FAILED → SUBMITTED bumps it so a later LIQUIDITY_FAILED is a new event.
+   */
+  private async markSubmitted(
+    id: string,
+  ): Promise<{ applied: boolean; operation: LiquidityPoolOperation }> {
+    const resent = await this.prisma.liquidityPoolOperation.updateMany({
+      where: { id, status: 'FAILED' },
+      data: { status: 'SUBMITTED', settlementEpoch: { increment: 1 } },
+    });
+    if (resent.count > 0) {
+      const operation =
+        await this.prisma.liquidityPoolOperation.findUniqueOrThrow({
+          where: { id },
+        });
+      return { applied: true, operation };
+    }
+    return this.guardedUpdate(id, ['PENDING'], { status: 'SUBMITTED' });
   }
 
   /**

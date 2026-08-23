@@ -24,8 +24,9 @@ export class WebhookEventPayload {
 
 /**
  * Terminal settlement events. Observer and submit can both reach these; emission
- * is gated on a unique `(eventType, resourceId)` claim so the pair produces one
- * notification, not two with different `evt_` ids.
+ * is gated on a unique `(eventType, resourceId, settlementEpoch)` claim so the
+ * pair produces one notification, not two with different `evt_` ids. Epoch
+ * advances on a FAILED → SUBMITTED resubmit so a later failure is a new event.
  */
 export const TERMINAL_WEBHOOK_EVENTS = [
   'SWAP_SUCCEEDED',
@@ -44,10 +45,11 @@ export function isTerminalWebhookEvent(
   );
 }
 
-/** Stable uniqueness key: one row per operation and terminal event type. */
+/** Stable uniqueness key: one row per operation, event type, and attempt. */
 export function terminalEventDedupKey(
   type: WebhookEventType,
   resourceId: string,
+  settlementEpoch = 0,
 ): string {
-  return `${type}:${resourceId}`;
+  return `${type}:${resourceId}:${settlementEpoch}`;
 }

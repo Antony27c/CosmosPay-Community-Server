@@ -108,7 +108,15 @@ function createPrisma(seed: any[] = []) {
       }),
       updateMany: jest.fn(async ({ where, data }: any) => {
         const matched = rows.filter((r) => matchesWhere(r, where));
-        for (const row of matched) Object.assign(row, data);
+        for (const row of matched) {
+          const next = { ...data };
+          if (next.settlementEpoch?.increment != null) {
+            row.settlementEpoch =
+              (row.settlementEpoch ?? 0) + next.settlementEpoch.increment;
+            delete next.settlementEpoch;
+          }
+          Object.assign(row, next);
+        }
         return { count: matched.length };
       }),
       create: jest.fn(async ({ data }: any) => {
@@ -292,6 +300,7 @@ function depositRow(overrides: Record<string, unknown> = {}): any {
     xdr: 'AAAA',
     uri: 'web+stellar:tx?xdr=AAAA',
     txHash: TX_HASH,
+    settlementEpoch: 0,
     expiresAt: new Date(Date.now() + 60_000),
     createdAt: new Date(),
     updatedAt: new Date(),

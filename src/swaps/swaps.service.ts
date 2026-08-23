@@ -28,7 +28,6 @@ import { CreateSwapDto } from './dto/create-swap.dto';
 import { QuerySwapsDto } from './dto/query-swaps.dto';
 import { QuoteSwapDto } from './dto/quote-swap.dto';
 import {
-  SWAP_CAN_SUBMIT_STATUSES,
   SWAP_CAN_SUCCEED_STATUSES,
   SWAP_IN_FLIGHT_STATUSES,
 } from './swap-transitions';
@@ -322,13 +321,7 @@ export class SwapsService {
     // Mark in-flight before broadcasting; on an unreachable network we leave it
     // here (re-submittable), only advancing to a terminal state on a real result.
     // Observer may have liquidated the row between our read and this write.
-    const submitted = await this.guardedUpdate(
-      swap.id,
-      SWAP_CAN_SUBMIT_STATUSES,
-      {
-        status: 'SUBMITTED',
-      },
-    );
+    const submitted = await this.markSubmitted(swap.id);
     if (submitted.swap.status === 'SUCCEEDED') {
       return {
         submitted: true,
@@ -527,6 +520,25 @@ export class SwapsService {
     });
     const swap = await this.prisma.swap.findUniqueOrThrow({ where: { id } });
     return { applied: result.count > 0, swap };
+  }
+
+  /**
+   * PENDING → SUBMITTED does not bump the epoch (same settlement attempt).
+   * FAILED → SUBMITTED does: that is a new attempt, so a later SWAP_FAILED
+   * must not share the previous attempt's dedup key.
+   */
+  private async markSubmitted(
+    id: string,
+  ): Promise<{ applied: boolean; swap: Swap }> {
+    const resent = await this.prisma.swap.updateMany({
+      where: { id, status: 'FAILED' },
+      data: { status: 'SUBMITTED', settlementEpoch: { increment: 1 } },
+    });
+    if (resent.count > 0) {
+      const swap = await this.prisma.swap.findUniqueOrThrow({ where: { id } });
+      return { applied: true, swap };
+    }
+    return this.guardedUpdate(id, ['PENDING'], { status: 'SUBMITTED' });
   }
 
   /**

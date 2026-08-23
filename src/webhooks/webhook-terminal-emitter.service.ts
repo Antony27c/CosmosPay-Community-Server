@@ -40,7 +40,11 @@ export class WebhookTerminalEmitter {
           `Terminal webhook event ${type} requires data.id to build the dedup key`,
         );
       }
-      const claimed = await this.claim(type, resourceId);
+      const claimed = await this.claim(
+        type,
+        resourceId,
+        settlementEpochOf(data),
+      );
       if (!claimed) return false;
     }
 
@@ -55,11 +59,15 @@ export class WebhookTerminalEmitter {
    * Inserts the unique claim row. Relies on the database unique index — a
    * pre-check would race under concurrent observer + submit.
    */
-  async claim(type: WebhookEventType, resourceId: string): Promise<boolean> {
+  async claim(
+    type: WebhookEventType,
+    resourceId: string,
+    settlementEpoch = 0,
+  ): Promise<boolean> {
     try {
       await this.prisma.webhookEmittedEvent.create({
         data: {
-          dedupKey: terminalEventDedupKey(type, resourceId),
+          dedupKey: terminalEventDedupKey(type, resourceId, settlementEpoch),
           eventType: type,
         },
       });
@@ -81,6 +89,18 @@ function resourceIdOf(data: unknown): string | undefined {
     return (data as { id: string }).id;
   }
   return undefined;
+}
+
+function settlementEpochOf(data: unknown): number {
+  if (
+    data !== null &&
+    typeof data === 'object' &&
+    'settlementEpoch' in data &&
+    typeof (data as { settlementEpoch: unknown }).settlementEpoch === 'number'
+  ) {
+    return (data as { settlementEpoch: number }).settlementEpoch;
+  }
+  return 0;
 }
 
 /** True for a Prisma unique-constraint violation (P2002). */

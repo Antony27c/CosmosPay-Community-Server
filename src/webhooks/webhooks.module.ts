@@ -1,10 +1,11 @@
-import { Module } from '@nestjs/common';
+import { Global, Module } from '@nestjs/common';
 import { WebhooksController } from './webhooks.controller';
 import { WebhooksService } from './webhooks.service';
 import { WebhookDispatcherService } from './webhook-dispatcher.service';
 import { WebhookDestinationGuard } from './webhook-destination.guard';
 import { WebhookTerminalEmitter } from './webhook-terminal-emitter.service';
 
+@Global()
 @Module({
   controllers: [WebhooksController],
   providers: [

@@ -101,15 +101,18 @@ describe('WebhookTerminalEmitter (issue #29)', () => {
     );
   });
 
-  it('builds a stable dedup key per operation and terminal event type', () => {
+  it('builds a stable dedup key per operation, event type, and attempt', () => {
     expect(terminalEventDedupKey('SWAP_SUCCEEDED', 'swap_1')).toBe(
-      'SWAP_SUCCEEDED:swap_1',
+      'SWAP_SUCCEEDED:swap_1:0',
     );
     expect(terminalEventDedupKey('SWAP_FAILED', 'swap_1')).toBe(
-      'SWAP_FAILED:swap_1',
+      'SWAP_FAILED:swap_1:0',
+    );
+    expect(terminalEventDedupKey('SWAP_FAILED', 'swap_1', 1)).toBe(
+      'SWAP_FAILED:swap_1:1',
     );
     expect(terminalEventDedupKey('LIQUIDITY_SUCCEEDED', 'op_1')).toBe(
-      'LIQUIDITY_SUCCEEDED:op_1',
+      'LIQUIDITY_SUCCEEDED:op_1:0',
     );
   });
 
@@ -183,6 +186,34 @@ describe('WebhookTerminalEmitter (issue #29)', () => {
       emitter.emit('cosmos_u1', 'SWAP_FAILED', { id: 'swap_1' }),
     ).resolves.toBe(true);
     expect(terminalCalls(events, 'SWAP_SUCCEEDED')).toHaveLength(1);
+    expect(terminalCalls(events, 'SWAP_FAILED')).toHaveLength(1);
+  });
+
+  it('emits SWAP_FAILED again after a later settlement epoch (resubmit)', async () => {
+    const { emitter, events } = build();
+    await expect(
+      emitter.emit('cosmos_u1', 'SWAP_FAILED', {
+        id: 'swap_1',
+        settlementEpoch: 0,
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      emitter.emit('cosmos_u1', 'SWAP_FAILED', {
+        id: 'swap_1',
+        settlementEpoch: 1,
+      }),
+    ).resolves.toBe(true);
+    expect(terminalCalls(events, 'SWAP_FAILED')).toHaveLength(2);
+  });
+
+  it('dedupes SWAP_FAILED at the same settlement epoch', async () => {
+    const { emitter, events } = build();
+    const data = { id: 'swap_1', settlementEpoch: 0 };
+    const results = await Promise.all([
+      emitter.emit('cosmos_u1', 'SWAP_FAILED', data),
+      emitter.emit('cosmos_u1', 'SWAP_FAILED', data),
+    ]);
+    expect(results.filter(Boolean)).toHaveLength(1);
     expect(terminalCalls(events, 'SWAP_FAILED')).toHaveLength(1);
   });
 });

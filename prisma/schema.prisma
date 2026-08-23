@@ -551,6 +551,10 @@ model Swap {
   memo        String?
 
   status      SwapStatus @default(PENDING)
+  // Bumped only on FAILED → SUBMITTED (a real resubmit). Terminal webhook
+  // dedup keys include this so a later SWAP_FAILED is not collapsed into the
+  // first attempt, while observer+submit of the same attempt still share a key.
+  settlementEpoch Int     @default(0)
   // Unsigned transaction envelope + its SEP-7 `tx` deep link. QR derived on read.
   xdr         String
   uri         String
@@ -625,6 +629,9 @@ model LiquidityPoolOperation {
   settledAmountB String?
 
   status SwapStatus @default(PENDING)
+  // Same meaning as Swap.settlementEpoch — resubmit discriminator for
+  // LIQUIDITY_FAILED dedup (issue #29).
+  settlementEpoch Int @default(0)
 
   // Unsigned transaction envelope + its SEP-7 `tx` deep link. QR derived on read.
   xdr    String
