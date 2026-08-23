@@ -2,6 +2,17 @@
 
 All notable changes to the Cosmos Pay Community Server are documented here.
 Generated from [Conventional Commits](https://www.conventionalcommits.org) by [git-cliff](https://git-cliff.org).
+## [0.0.7] - 2026-08-23
+
+### Bug Fixes
+- Fail fast on misconfigured env vars (#24) (9609260)
+- Set swap fee wallet placeholder for openapi:generate (c8e7056)
+
+### Miscellaneous
+- Add issue #24 evidence reproducers (c0c2206)
+- Sync generated spec after rebase (98d3da8)
+- Revert to main spec (platform-neutral) (8798357)
+
 ## [0.0.6] - 2026-08-23
 
 ### Bug Fixes
