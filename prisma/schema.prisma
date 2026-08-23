@@ -202,6 +202,20 @@ model WebhookDelivery {
   @@map("webhook_delivery")
 }
 
+// One row per (operation, terminal event type). Inserting this row is winning
+// the right to notify integrators; the unique index on `dedupKey` makes a race
+// between the settlement observer and submit produce a single event. Check-
+// then-insert is not enough — PostgreSQL enforces uniqueness under concurrency.
+model WebhookEmittedEvent {
+  id        String           @id @default(cuid())
+  // Stable key: "{eventType}:{resourceId}" e.g. "SWAP_SUCCEEDED:clxyz".
+  dedupKey  String           @unique
+  eventType WebhookEventType
+  createdAt DateTime         @default(now())
+
+  @@map("webhook_emitted_event")
+}
+
 // Lifecycle of a Stellar payment intent. Kept for traceability — the unsigned
 // transaction (xdr/uri) is persisted at creation and the status is advanced as
 // the customer signs/submits it on the network.

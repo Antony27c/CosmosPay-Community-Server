@@ -6,7 +6,6 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   Asset,
   LiquidityPoolAsset,
@@ -26,7 +25,7 @@ import type {
   SwapStatus,
   WebhookEventType,
 } from '../../generated/prisma/client';
-import { WEBHOOK_EVENT, WebhookEventPayload } from '../webhooks/webhook-events';
+import { WebhookTerminalEmitter } from '../webhooks/webhook-terminal-emitter.service';
 import { applySlippage, fromStroops, toStroops } from '../swaps/swap-math';
 import {
   aggregateCostBasis,
@@ -120,7 +119,7 @@ export class LiquidityPoolsService {
   constructor(
     private readonly config: ConfigService<AppConfig, true>,
     private readonly prisma: PrismaService,
-    private readonly events: EventEmitter2,
+    private readonly webhooks: WebhookTerminalEmitter,
     private readonly stellar: StellarService,
   ) {}
 
@@ -650,7 +649,11 @@ export class LiquidityPoolsService {
       );
     }
     if (submitted.applied) {
-      this.emit(consumer.username, 'LIQUIDITY_SUBMITTED', submitted.operation);
+      await this.emit(
+        consumer.username,
+        'LIQUIDITY_SUBMITTED',
+        submitted.operation,
+      );
     }
 
     try {
@@ -746,7 +749,7 @@ export class LiquidityPoolsService {
         expiresAt: new Date(Date.now() + timeoutSeconds * 1000),
       },
     });
-    this.emit(consumer.username, 'LIQUIDITY_CREATED', op);
+    await this.emit(consumer.username, 'LIQUIDITY_CREATED', op);
     return this.withQr(op);
   }
 
@@ -787,7 +790,7 @@ export class LiquidityPoolsService {
       LP_CAN_SUCCEED_STATUSES,
       { status: 'SUCCEEDED', ...(txHash ? { txHash } : {}) },
     );
-    if (applied) this.emit(username, 'LIQUIDITY_SUCCEEDED', operation);
+    if (applied) await this.emit(username, 'LIQUIDITY_SUCCEEDED', operation);
     if (operation.status === 'SUCCEEDED') {
       await this.captureDepositBasis(operation);
       const fresh = await this.prisma.liquidityPoolOperation.findUniqueOrThrow({
@@ -811,7 +814,7 @@ export class LiquidityPoolsService {
       LP_IN_FLIGHT_STATUSES,
       { status: 'FAILED' },
     );
-    if (applied) this.emit(username, 'LIQUIDITY_FAILED', operation);
+    if (applied) await this.emit(username, 'LIQUIDITY_FAILED', operation);
     return { applied, operation };
   }
 
@@ -1209,11 +1212,8 @@ export class LiquidityPoolsService {
     username: string,
     type: WebhookEventType,
     data: LiquidityPoolOperation,
-  ): void {
-    this.events.emit(
-      WEBHOOK_EVENT,
-      new WebhookEventPayload(username, type, data),
-    );
+  ): Promise<boolean> {
+    return this.webhooks.emit(username, type, data);
   }
 }
 

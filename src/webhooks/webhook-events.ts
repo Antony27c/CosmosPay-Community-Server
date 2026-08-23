@@ -10,6 +10,9 @@ export const WEBHOOK_EVENT = 'webhook.event';
 /**
  * Payload emitted on the internal bus. `consumerUsername` scopes delivery to the
  * integrator (APISIX consumer) that owns the affected resource.
+ *
+ * Integrator-facing webhook bodies stay `{ id, type, createdAt, data }` — this
+ * class is the internal envelope, not the HTTP JSON.
  */
 export class WebhookEventPayload {
   constructor(
@@ -17,4 +20,34 @@ export class WebhookEventPayload {
     readonly type: WebhookEventType,
     readonly data: unknown,
   ) {}
+}
+
+/**
+ * Terminal settlement events. Observer and submit can both reach these; emission
+ * is gated on a unique `(eventType, resourceId)` claim so the pair produces one
+ * notification, not two with different `evt_` ids.
+ */
+export const TERMINAL_WEBHOOK_EVENTS = [
+  'SWAP_SUCCEEDED',
+  'SWAP_FAILED',
+  'LIQUIDITY_SUCCEEDED',
+  'LIQUIDITY_FAILED',
+] as const satisfies readonly WebhookEventType[];
+
+export type TerminalWebhookEventType = (typeof TERMINAL_WEBHOOK_EVENTS)[number];
+
+export function isTerminalWebhookEvent(
+  type: WebhookEventType,
+): type is TerminalWebhookEventType {
+  return (TERMINAL_WEBHOOK_EVENTS as readonly WebhookEventType[]).includes(
+    type,
+  );
+}
+
+/** Stable uniqueness key: one row per operation and terminal event type. */
+export function terminalEventDedupKey(
+  type: WebhookEventType,
+  resourceId: string,
+): string {
+  return `${type}:${resourceId}`;
 }

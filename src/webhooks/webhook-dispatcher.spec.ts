@@ -45,11 +45,7 @@ describe('WebhookDispatcherService', () => {
     if (!destinations) {
       guard.replaceDnsLookup(async () => ['93.184.216.34']);
     }
-    const service = new WebhookDispatcherService(
-      prisma as any,
-      config,
-      guard,
-    );
+    const service = new WebhookDispatcherService(prisma as any, config, guard);
     return { service, prisma, guard };
   }
 
@@ -84,6 +80,13 @@ describe('WebhookDispatcherService', () => {
     const ts = Number(tPart.replace('t=', ''));
     const v1 = v1Part.replace('v1=', '');
     expect(signPayload(endpoint.secret, init.body, ts)).toBe(v1);
+
+    // Integrator HTTP envelope is unchanged: { id, type, createdAt, data }.
+    const body = JSON.parse(init.body);
+    expect(Object.keys(body)).toEqual(['id', 'type', 'createdAt', 'data']);
+    expect(body.id).toMatch(/^evt_/);
+    expect(body.type).toBe('PAYMENT_INTENT_CREATED');
+    expect(body.data).toEqual({ id: 'pi_1' });
 
     // Persisted a delivery and finalized it as SUCCEEDED.
     expect(prisma.webhookDelivery.create).toHaveBeenCalledTimes(1);

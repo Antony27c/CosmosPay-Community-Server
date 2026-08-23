@@ -4,6 +4,8 @@ import { GatewayConsumer } from '../common/interfaces/gateway-consumer.interface
 import { toStroops } from '../swaps/swap-math';
 import { LiquidityPoolsService } from './liquidity-pools.service';
 import { SettlementObserverService } from '../observer/settlement-observer.service';
+import { WebhookTerminalEmitter } from '../webhooks/webhook-terminal-emitter.service';
+import { WEBHOOK_EVENT } from '../webhooks/webhook-events';
 
 jest.mock('qrcode', () => ({
   __esModule: true,
@@ -124,8 +126,46 @@ function createPrisma(seed: any[] = []) {
         return { ...created };
       }),
     },
+    webhookEmittedEvent: uniqueEmittedEvents(),
   };
   return prisma;
+}
+
+/** Simulates the unique index on webhook_emitted_event.dedupKey (P2002). */
+function uniqueEmittedEvents() {
+  const keys = new Set<string>();
+  const tails = new Map<string, Promise<unknown>>();
+  return {
+    create: jest.fn(async ({ data }: any) => {
+      const prev = tails.get(data.dedupKey) ?? Promise.resolve();
+      let release!: () => void;
+      const gate = new Promise<void>((r) => {
+        release = r;
+      });
+      tails.set(
+        data.dedupKey,
+        prev.then(
+          () => gate,
+          () => gate,
+        ),
+      );
+      try {
+        await prev.catch(() => undefined);
+        if (keys.has(data.dedupKey)) {
+          const err: any = new Error(
+            'Unique constraint failed on the fields: (`dedupKey`)',
+          );
+          err.code = 'P2002';
+          err.meta = { target: ['dedupKey'] };
+          throw err;
+        }
+        keys.add(data.dedupKey);
+        return { id: `wee_${keys.size}`, createdAt: new Date(), ...data };
+      } finally {
+        release();
+      }
+    }),
+  };
 }
 
 function stellarConfig() {
@@ -271,10 +311,11 @@ describe('LiquidityPoolsService — commission engine', () => {
     stellar = makeStellar();
     events = { emit: jest.fn() } as any;
     const config = { get: () => stellarConfig() } as any;
+    const webhooks = new WebhookTerminalEmitter(prisma as any, events);
     service = new LiquidityPoolsService(
       config,
       prisma as any,
-      events,
+      webhooks,
       stellar as any,
     );
   });
@@ -461,18 +502,19 @@ describe('LiquidityPoolsService.submit vs observer (issue #32 race)', () => {
           ? { enabled: false, intervalMs: 15_000, batchSize: 50 }
           : stellarConfig(),
     } as any;
+    const webhooks = new WebhookTerminalEmitter(prisma as any, events);
     service = new LiquidityPoolsService(
       config,
       prisma as any,
-      events,
+      webhooks,
       stellar as any,
     );
     observer = new SettlementObserverService(
       config,
       prisma as any,
       stellar as any,
-      events,
       service,
+      {} as any,
     );
     jest
       .spyOn(TransactionBuilder, 'fromXDR')
@@ -509,6 +551,12 @@ describe('LiquidityPoolsService.submit vs observer (issue #32 race)', () => {
     const basis = await (service as any).costBasis('c1', SOURCE, POOL_ID);
     expect(basis.remainingShares).toBe(toStroops('100'));
     expect(basis.costA).toBe(toStroops('1000'));
+
+    const succeeded = (events.emit as unknown as jest.Mock).mock.calls.filter(
+      ([name, payload]) =>
+        name === WEBHOOK_EVENT && payload.type === 'LIQUIDITY_SUCCEEDED',
+    );
+    expect(succeeded).toHaveLength(1);
   });
 
   it('observer FAILED must not overwrite a row submit already marked SUCCEEDED', async () => {
@@ -571,5 +619,24 @@ describe('LiquidityPoolsService.submit vs observer (issue #32 race)', () => {
     expect(result.applied).toBe(false);
     expect(row.status).toBe('SUCCEEDED');
     expect(row.sharesReceived).toBe('50');
+  });
+
+  it('observer and submit in parallel emit LIQUIDITY_SUCCEEDED once (used to emit twice)', async () => {
+    const row = depositRow({ status: 'PENDING' });
+    prisma.rows.push(row);
+    stellar.txCall.mockResolvedValue({ successful: true });
+    stellar.submitTransaction.mockResolvedValue({ hash: TX_HASH });
+
+    await Promise.all([
+      service.submit(consumer, row.id, 'signed-xdr'),
+      (observer as any).reconcileLiquidity(50),
+    ]);
+
+    expect(row.status).toBe('SUCCEEDED');
+    const succeeded = (events.emit as unknown as jest.Mock).mock.calls.filter(
+      ([name, payload]) =>
+        name === WEBHOOK_EVENT && payload.type === 'LIQUIDITY_SUCCEEDED',
+    );
+    expect(succeeded).toHaveLength(1);
   });
 });

@@ -3,6 +3,7 @@ import { WebhooksController } from './webhooks.controller';
 import { WebhooksService } from './webhooks.service';
 import { WebhookDispatcherService } from './webhook-dispatcher.service';
 import { WebhookDestinationGuard } from './webhook-destination.guard';
+import { WebhookTerminalEmitter } from './webhook-terminal-emitter.service';
 
 @Module({
   controllers: [WebhooksController],
@@ -10,9 +11,9 @@ import { WebhookDestinationGuard } from './webhook-destination.guard';
     WebhooksService,
     WebhookDispatcherService,
     WebhookDestinationGuard,
+    WebhookTerminalEmitter,
   ],
-  // Exported so other modules could dispatch directly if ever needed; events
-  // are the primary integration path though.
-  exports: [WebhookDispatcherService],
+  // Terminal emitter is the single claim+emit path for observer and submit.
+  exports: [WebhookDispatcherService, WebhookTerminalEmitter],
 })
 export class WebhooksModule {}
