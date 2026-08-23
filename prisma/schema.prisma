@@ -202,6 +202,20 @@ model WebhookDelivery {
   @@map("webhook_delivery")
 }
 
+// One row per (operation, terminal event type). Inserting this row is winning
+// the right to notify integrators; the unique index on `dedupKey` makes a race
+// between the settlement observer and submit produce a single event. Check-
+// then-insert is not enough — PostgreSQL enforces uniqueness under concurrency.
+model WebhookEmittedEvent {
+  id        String           @id @default(cuid())
+  // Stable key: "{eventType}:{resourceId}" e.g. "SWAP_SUCCEEDED:clxyz".
+  dedupKey  String           @unique
+  eventType WebhookEventType
+  createdAt DateTime         @default(now())
+
+  @@map("webhook_emitted_event")
+}
+
 // Lifecycle of a Stellar payment intent. Kept for traceability — the unsigned
 // transaction (xdr/uri) is persisted at creation and the status is advanced as
 // the customer signs/submits it on the network.
@@ -537,6 +551,10 @@ model Swap {
   memo        String?
 
   status      SwapStatus @default(PENDING)
+  // Bumped only on FAILED → SUBMITTED (a real resubmit). Terminal webhook
+  // dedup keys include this so a later SWAP_FAILED is not collapsed into the
+  // first attempt, while observer+submit of the same attempt still share a key.
+  settlementEpoch Int     @default(0)
   // Unsigned transaction envelope + its SEP-7 `tx` deep link. QR derived on read.
   xdr         String
   uri         String
@@ -611,6 +629,9 @@ model LiquidityPoolOperation {
   settledAmountB String?
 
   status SwapStatus @default(PENDING)
+  // Same meaning as Swap.settlementEpoch — resubmit discriminator for
+  // LIQUIDITY_FAILED dedup (issue #29).
+  settlementEpoch Int @default(0)
 
   // Unsigned transaction envelope + its SEP-7 `tx` deep link. QR derived on read.
   xdr    String

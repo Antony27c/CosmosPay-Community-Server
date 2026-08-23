@@ -6,7 +6,6 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   Asset,
   LiquidityPoolAsset,
@@ -26,7 +25,7 @@ import type {
   SwapStatus,
   WebhookEventType,
 } from '../../generated/prisma/client';
-import { WEBHOOK_EVENT, WebhookEventPayload } from '../webhooks/webhook-events';
+import { WebhookTerminalEmitter } from '../webhooks/webhook-terminal-emitter.service';
 import { applySlippage, fromStroops, toStroops } from '../swaps/swap-math';
 import {
   aggregateCostBasis,
@@ -36,7 +35,6 @@ import {
   proportionalShare,
 } from './lp-math';
 import {
-  LP_CAN_SUBMIT_STATUSES,
   LP_CAN_SUCCEED_STATUSES,
   LP_IN_FLIGHT_STATUSES,
   type LpOperationStatus,
@@ -120,7 +118,7 @@ export class LiquidityPoolsService {
   constructor(
     private readonly config: ConfigService<AppConfig, true>,
     private readonly prisma: PrismaService,
-    private readonly events: EventEmitter2,
+    private readonly webhooks: WebhookTerminalEmitter,
     private readonly stellar: StellarService,
   ) {}
 
@@ -632,9 +630,7 @@ export class LiquidityPoolsService {
       );
     }
 
-    const submitted = await this.guardedUpdate(op.id, LP_CAN_SUBMIT_STATUSES, {
-      status: 'SUBMITTED',
-    });
+    const submitted = await this.markSubmitted(op.id);
     // Observer may have liquidated the row between our read and this write.
     if (submitted.operation.status === 'SUCCEEDED') {
       return {
@@ -650,7 +646,11 @@ export class LiquidityPoolsService {
       );
     }
     if (submitted.applied) {
-      this.emit(consumer.username, 'LIQUIDITY_SUBMITTED', submitted.operation);
+      await this.emit(
+        consumer.username,
+        'LIQUIDITY_SUBMITTED',
+        submitted.operation,
+      );
     }
 
     try {
@@ -746,7 +746,7 @@ export class LiquidityPoolsService {
         expiresAt: new Date(Date.now() + timeoutSeconds * 1000),
       },
     });
-    this.emit(consumer.username, 'LIQUIDITY_CREATED', op);
+    await this.emit(consumer.username, 'LIQUIDITY_CREATED', op);
     return this.withQr(op);
   }
 
@@ -773,6 +773,27 @@ export class LiquidityPoolsService {
   }
 
   /**
+   * PENDING → SUBMITTED keeps the epoch (same settlement attempt).
+   * FAILED → SUBMITTED bumps it so a later LIQUIDITY_FAILED is a new event.
+   */
+  private async markSubmitted(
+    id: string,
+  ): Promise<{ applied: boolean; operation: LiquidityPoolOperation }> {
+    const resent = await this.prisma.liquidityPoolOperation.updateMany({
+      where: { id, status: 'FAILED' },
+      data: { status: 'SUBMITTED', settlementEpoch: { increment: 1 } },
+    });
+    if (resent.count > 0) {
+      const operation =
+        await this.prisma.liquidityPoolOperation.findUniqueOrThrow({
+          where: { id },
+        });
+      return { applied: true, operation };
+    }
+    return this.guardedUpdate(id, ['PENDING'], { status: 'SUBMITTED' });
+  }
+
+  /**
    * Promotes an in-flight (or falsely-FAILED) operation to SUCCEEDED and
    * captures deposit cost basis. Idempotent if already SUCCEEDED. Used by
    * submit and the settlement observer so both writers share the same guard.
@@ -787,7 +808,7 @@ export class LiquidityPoolsService {
       LP_CAN_SUCCEED_STATUSES,
       { status: 'SUCCEEDED', ...(txHash ? { txHash } : {}) },
     );
-    if (applied) this.emit(username, 'LIQUIDITY_SUCCEEDED', operation);
+    if (applied) await this.emit(username, 'LIQUIDITY_SUCCEEDED', operation);
     if (operation.status === 'SUCCEEDED') {
       await this.captureDepositBasis(operation);
       const fresh = await this.prisma.liquidityPoolOperation.findUniqueOrThrow({
@@ -811,7 +832,7 @@ export class LiquidityPoolsService {
       LP_IN_FLIGHT_STATUSES,
       { status: 'FAILED' },
     );
-    if (applied) this.emit(username, 'LIQUIDITY_FAILED', operation);
+    if (applied) await this.emit(username, 'LIQUIDITY_FAILED', operation);
     return { applied, operation };
   }
 
@@ -1209,11 +1230,8 @@ export class LiquidityPoolsService {
     username: string,
     type: WebhookEventType,
     data: LiquidityPoolOperation,
-  ): void {
-    this.events.emit(
-      WEBHOOK_EVENT,
-      new WebhookEventPayload(username, type, data),
-    );
+  ): Promise<boolean> {
+    return this.webhooks.emit(username, type, data);
   }
 }
 

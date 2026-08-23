@@ -6,7 +6,6 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   Asset,
   Memo,
@@ -24,10 +23,14 @@ import type {
   SwapStatus,
   WebhookEventType,
 } from '../../generated/prisma/client';
-import { WEBHOOK_EVENT, WebhookEventPayload } from '../webhooks/webhook-events';
+import { WebhookTerminalEmitter } from '../webhooks/webhook-terminal-emitter.service';
 import { CreateSwapDto } from './dto/create-swap.dto';
 import { QuerySwapsDto } from './dto/query-swaps.dto';
 import { QuoteSwapDto } from './dto/quote-swap.dto';
+import {
+  SWAP_CAN_SUCCEED_STATUSES,
+  SWAP_IN_FLIGHT_STATUSES,
+} from './swap-transitions';
 import {
   SwapAssetAmount,
   SwapPathHop,
@@ -106,7 +109,7 @@ export class SwapsService {
   constructor(
     private readonly config: ConfigService<AppConfig, true>,
     private readonly prisma: PrismaService,
-    private readonly events: EventEmitter2,
+    private readonly webhooks: WebhookTerminalEmitter,
     private readonly stellar: StellarService,
   ) {}
 
@@ -236,7 +239,7 @@ export class SwapsService {
       `Created swap ${swap.id}: ${priced.sendAmount} ${this.label(priced.send)} → ` +
         `~${priced.estimated} ${this.label(priced.dest)} (consumer=${consumer.username}, network=${network})`,
     );
-    this.emit(consumer.username, 'SWAP_CREATED', swap);
+    await this.emit(consumer.username, 'SWAP_CREATED', swap);
     return this.withQr(swap);
   }
 
@@ -317,18 +320,30 @@ export class SwapsService {
 
     // Mark in-flight before broadcasting; on an unreachable network we leave it
     // here (re-submittable), only advancing to a terminal state on a real result.
-    await this.setStatus(
-      swap.id,
-      consumer.username,
-      'SUBMITTED',
-      'SWAP_SUBMITTED',
-    );
+    // Observer may have liquidated the row between our read and this write.
+    const submitted = await this.markSubmitted(swap.id);
+    if (submitted.swap.status === 'SUCCEEDED') {
+      return {
+        submitted: true,
+        status: 'SUCCEEDED',
+        txHash: submitted.swap.txHash,
+        swap: await this.withQr(submitted.swap),
+      };
+    }
+    if (submitted.swap.status !== 'SUBMITTED') {
+      throw new BadRequestException(
+        `Cannot submit a ${submitted.swap.status} swap`,
+      );
+    }
+    if (submitted.applied) {
+      await this.emit(consumer.username, 'SWAP_SUBMITTED', submitted.swap);
+    }
 
     try {
       const res = await this.stellar
         .server(swap.network as StellarNetwork)
         .submitTransaction(tx);
-      const succeeded = await this.markSucceeded(
+      const succeeded = await this.finalizeSucceeded(
         swap.id,
         consumer.username,
         res.hash,
@@ -339,14 +354,25 @@ export class SwapsService {
       return {
         submitted: true,
         status: 'SUCCEEDED',
-        txHash: res.hash,
-        swap: await this.withQr(succeeded),
+        txHash: succeeded.swap.txHash,
+        swap: await this.withQr(succeeded.swap),
       };
     } catch (err) {
       const resultCodes = this.extractResultCodes(err);
       if (resultCodes) {
-        // The network reached us and rejected the tx — a terminal failure.
-        const failed = await this.markFailed(swap.id, consumer.username);
+        const failed = await this.finalizeFailed(swap.id, consumer.username);
+        if (failed.swap.status === 'SUCCEEDED') {
+          // Observer already settled this tx on-chain. Do not report failure.
+          this.logger.log(
+            `Swap ${swap.id} Horizon rejection ignored; already SUCCEEDED`,
+          );
+          return {
+            submitted: true,
+            status: 'SUCCEEDED',
+            txHash: failed.swap.txHash,
+            swap: await this.withQr(failed.swap),
+          };
+        }
         this.logger.warn(
           `Swap ${swap.id} rejected on submit: ${resultCodes.join(', ')}`,
         );
@@ -355,7 +381,7 @@ export class SwapsService {
           status: 'FAILED',
           reason: 'Transaction rejected by the network',
           resultCodes,
-          swap: await this.withQr(failed),
+          swap: await this.withQr(failed.swap),
         };
       }
       // Couldn't reach Horizon — leave it SUBMITTED so it can be retried.
@@ -478,40 +504,87 @@ export class SwapsService {
   }
 
   // ── Status transitions ──────────────────────────────────────────────────────
-  private async setStatus(
+  /**
+   * Optimistic status guard: the UPDATE only matches rows still in `from`.
+   * Winning this write is what authorizes a terminal webhook — arriving at
+   * SUCCEEDED/FAILED by a stale read must not emit.
+   */
+  private async guardedUpdate(
     id: string,
-    username: string,
-    status: SwapStatus,
-    event: WebhookEventType,
-  ): Promise<Swap> {
-    const updated = await this.prisma.swap.update({
-      where: { id },
-      data: { status },
+    from: readonly SwapStatus[],
+    data: { status: SwapStatus; txHash?: string },
+  ): Promise<{ applied: boolean; swap: Swap }> {
+    const result = await this.prisma.swap.updateMany({
+      where: { id, status: { in: [...from] } },
+      data,
     });
-    this.emit(username, event, updated);
-    return updated;
+    const swap = await this.prisma.swap.findUniqueOrThrow({ where: { id } });
+    return { applied: result.count > 0, swap };
   }
 
-  private async markSucceeded(
+  /**
+   * PENDING → SUBMITTED does not bump the epoch (same settlement attempt).
+   * FAILED → SUBMITTED does: that is a new attempt, so a later SWAP_FAILED
+   * must not share the previous attempt's dedup key.
+   */
+  private async markSubmitted(
     id: string,
-    username: string,
-    txHash: string,
-  ): Promise<Swap> {
-    const updated = await this.prisma.swap.update({
-      where: { id },
-      data: { status: 'SUCCEEDED', txHash },
+  ): Promise<{ applied: boolean; swap: Swap }> {
+    const resent = await this.prisma.swap.updateMany({
+      where: { id, status: 'FAILED' },
+      data: { status: 'SUBMITTED', settlementEpoch: { increment: 1 } },
     });
-    this.emit(username, 'SWAP_SUCCEEDED', updated);
-    return updated;
+    if (resent.count > 0) {
+      const swap = await this.prisma.swap.findUniqueOrThrow({ where: { id } });
+      return { applied: true, swap };
+    }
+    return this.guardedUpdate(id, ['PENDING'], { status: 'SUBMITTED' });
   }
 
-  private async markFailed(id: string, username: string): Promise<Swap> {
-    const updated = await this.prisma.swap.update({
-      where: { id },
-      data: { status: 'FAILED' },
+  /**
+   * Promotes an in-flight (or falsely-FAILED) swap to SUCCEEDED. Idempotent if
+   * already SUCCEEDED. Used by submit and the settlement observer so both
+   * writers share the same guard and the same emit function.
+   */
+  async finalizeSucceeded(
+    id: string,
+    username: string,
+    txHash?: string,
+  ): Promise<{ applied: boolean; swap: Swap }> {
+    const { applied, swap } = await this.guardedUpdate(
+      id,
+      SWAP_CAN_SUCCEED_STATUSES,
+      { status: 'SUCCEEDED', ...(txHash ? { txHash } : {}) },
+    );
+    if (applied) await this.emit(username, 'SWAP_SUCCEEDED', swap);
+    return { applied, swap };
+  }
+
+  /**
+   * Marks FAILED only while the row is still in-flight. A settled
+   * (`SUCCEEDED`) swap is left untouched.
+   */
+  async finalizeFailed(
+    id: string,
+    username: string,
+  ): Promise<{ applied: boolean; swap: Swap }> {
+    const { applied, swap } = await this.guardedUpdate(
+      id,
+      SWAP_IN_FLIGHT_STATUSES,
+      { status: 'FAILED' },
+    );
+    if (applied) await this.emit(username, 'SWAP_FAILED', swap);
+    return { applied, swap };
+  }
+
+  /**
+   * Marks EXPIRED only while the row is still in-flight. Never degrades a
+   * settled swap.
+   */
+  async finalizeExpired(id: string): Promise<{ applied: boolean; swap: Swap }> {
+    return this.guardedUpdate(id, SWAP_IN_FLIGHT_STATUSES, {
+      status: 'EXPIRED',
     });
-    this.emit(username, 'SWAP_FAILED', updated);
-    return updated;
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -686,11 +759,12 @@ export class SwapsService {
     };
   }
 
-  private emit(username: string, type: WebhookEventType, data: Swap): void {
-    this.events.emit(
-      WEBHOOK_EVENT,
-      new WebhookEventPayload(username, type, data),
-    );
+  private emit(
+    username: string,
+    type: WebhookEventType,
+    data: Swap,
+  ): Promise<boolean> {
+    return this.webhooks.emit(username, type, data);
   }
 }
 
