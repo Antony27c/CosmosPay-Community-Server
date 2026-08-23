@@ -40,9 +40,8 @@ async function bootstrap(): Promise<void> {
   app.useGlobalFilters(new AllExceptionsFilter());
 
   // OpenAPI docs + raw spec (/docs, /docs/json, /docs/yaml).
-  // Handy in dev; lock down or disable in prod as needed.
-  const docsEnabled = config.get('nodeEnv', { infer: true }) !== 'production';
-  if (docsEnabled) {
+  // Mounted as Express middleware — not behind ApisixGuard / PermissionsGuard.
+  if (config.get('swaggerEnabled', { infer: true })) {
     setupSwagger(app);
   }
 
@@ -62,13 +61,16 @@ async function bootstrap(): Promise<void> {
       logger.log(`             http://${ip}:${port}/v1`);
     }
   }
-  if (docsEnabled) {
+  const swaggerEnabled = config.get('swaggerEnabled', { infer: true });
+  if (swaggerEnabled) {
     logger.log(`  Swagger    http://localhost:${port}/docs`);
     logger.log(
       `  OpenAPI    http://localhost:${port}/docs/json (json) · /docs/yaml (yaml)`,
     );
   } else {
-    logger.log('  Swagger UI is disabled (NODE_ENV=production)');
+    logger.log(
+      '  Swagger UI is disabled (set SWAGGER_ENABLED=true to publish /docs)',
+    );
   }
 }
 

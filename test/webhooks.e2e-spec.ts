@@ -9,6 +9,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { WebhookDestinationGuard } from '../src/webhooks/webhook-destination.guard';
 
+
 /**
  * Full CRUD for webhook endpoints behind the APISIX gate. Prisma is mocked with
  * a tiny in-memory store; global fetch is mocked for the ping test. No DB/network.
@@ -64,9 +65,6 @@ describe('Webhooks CRUD (e2e)', () => {
     webhookDelivery: {
       findMany: jest.fn().mockResolvedValue([]),
       count: jest.fn().mockResolvedValue(0),
-    },
-    requestLog: {
-      create: jest.fn().mockResolvedValue({}),
     },
   };
 
