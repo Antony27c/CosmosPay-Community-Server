@@ -12,6 +12,8 @@ export type StellarNetwork = 'public' | 'testnet';
 
 export interface AppConfig {
   nodeEnv: string;
+  /** When true, mounts /docs (Express middleware — not behind Nest guards). */
+  swaggerEnabled: boolean;
   port: number;
   databaseUrl: string;
   apisix: {
@@ -101,8 +103,17 @@ const DEFAULT_HORIZON: Record<StellarNetwork, string> = {
   testnet: 'https://horizon-testnet.stellar.org',
 };
 
+function parseSwaggerEnabled(): boolean {
+  const raw = process.env.SWAGGER_ENABLED;
+  if (raw !== undefined) {
+    return raw.toLowerCase() === 'true';
+  }
+  return (process.env.NODE_ENV ?? 'development') !== 'production';
+}
+
 export default (): AppConfig => ({
   nodeEnv: process.env.NODE_ENV ?? 'development',
+  swaggerEnabled: parseSwaggerEnabled(),
   port: parseInt(process.env.PORT ?? '3000', 10),
   databaseUrl: process.env.DATABASE_URL ?? '',
   apisix: {

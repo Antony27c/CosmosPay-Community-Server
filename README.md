@@ -201,7 +201,15 @@ via `GET /webhooks/:id/deliveries` and re-send with the `redeliver` route.
 
 ### OpenAPI / Swagger
 
-Live (non-production), served by the app:
+**Security note:** `GET /docs`, `/docs/json`, and `/docs/yaml` are mounted by
+`SwaggerModule.setup` as **Express middleware**, not Nest controllers. They do
+**not** pass through `ApisixGuard` or `PermissionsGuard` — anyone who can reach
+the service port can fetch the full API spec unless docs are disabled. In
+production, docs are **off by default** (`NODE_ENV=production` and no
+`SWAGGER_ENABLED`). Set `SWAGGER_ENABLED=true` only when you deliberately want
+to publish the spec on a trusted network.
+
+Live docs (when enabled):
 
 - `GET /docs` — Swagger UI
 - `GET /docs/json` — OpenAPI 3.0 spec (JSON)
@@ -442,6 +450,60 @@ the BlindPay dashboard webhook to `<gateway>/v1/blindpay/webhooks` and set
 `BLINDPAY_WEBHOOK_SECRET` to that endpoint's signing secret. Leave the
 `BLINDPAY_*` vars blank to disable the feature (those routes return `503`). See
 `.env.example`.
+
+## Environment variables
+
+Every variable read from `process.env` in `src/` is validated at boot by
+`src/config/env.validation.ts` (fail-fast). Copy `.env.example` and adjust
+at least `DATABASE_URL` and `APISIX_GATEWAY_SECRET`.
+
+| Variable | Required | Default | Effect |
+| -------- | -------- | ------- | ------ |
+| `NODE_ENV` | no | `development` | Must be `development`, `test`, or `production` |
+| `PORT` | no | `3000` | HTTP listen port |
+| `DATABASE_URL` | **yes** | — | PostgreSQL connection for Prisma |
+| `APISIX_GATEWAY_SECRET` | **yes** | — | Shared secret APISIX injects as `X-Gateway-Secret` |
+| `APISIX_GATEWAY_SECRET_HEADER` | no | `x-gateway-secret` | Header name for the gateway secret |
+| `APISIX_CONSUMER_HEADER` | no | `x-consumer-username` | Authenticated consumer username |
+| `APISIX_CREDENTIAL_HEADER` | no | `x-credential-identifier` | Credential id from key-auth |
+| `APISIX_ENVIRONMENT_HEADER` | no | `x-consumer-env` | Key environment (`dev` / `prod`) |
+| `APISIX_ROLE_HEADER` | no | `x-consumer-role` | Consumer role forwarded by gateway |
+| `APISIX_PERMISSIONS_HEADER` | no | `x-consumer-permissions` | Permission list forwarded by gateway |
+| `APISIX_ORGANIZATION_HEADER` | no | `x-consumer-org` | Organization id |
+| `APISIX_PLAN_HEADER` | no | `x-consumer-plan` | Organization plan |
+| `APISIX_SWAP_FEE_BPS_HEADER` | no | `x-plan-swap-fee-bps` | Plan swap fee (bps) |
+| `STELLAR_NETWORK` | no | `testnet` | Fallback Stellar network (`public` / `testnet`) |
+| `STELLAR_HORIZON_URL_PUBLIC` | no | `https://horizon.stellar.org` | Mainnet Horizon base URL |
+| `STELLAR_HORIZON_URL_TESTNET` | no | `https://horizon-testnet.stellar.org` | Testnet Horizon base URL |
+| `STELLAR_BASE_FEE` | no | `100` | Stellar base fee (stroops) for tx builds |
+| `STELLAR_TX_TIMEOUT` | no | `300` | Transaction timeout (seconds) |
+| `STELLAR_SWAP_FEE_WALLET` | when fee > 0 | — | Platform G... account for swap fees |
+| `STELLAR_SWAP_FEE_BPS` | no | `50` | Swap fee in basis points |
+| `STELLAR_SWAP_SLIPPAGE_BPS` | no | `50` | Default swap slippage tolerance (bps) |
+| `STELLAR_SWAP_MAX_SLIPPAGE_BPS` | no | `500` | Hard cap on caller slippage (bps) |
+| `OBSERVER_ENABLED` | no | `true` | `true` / `false` — on-chain reconciler |
+| `OBSERVER_INTERVAL_MS` | no | `15000` | Observer poll interval (ms, min 1000) |
+| `OBSERVER_BATCH_SIZE` | no | `50` | Max intents/swaps per observer tick |
+| `PAYMENT_INTENT_TTL_SECONDS` | no | `3600` | Unpaid intent lifetime before `EXPIRED` |
+| `WEBHOOK_TIMEOUT_MS` | no | `5000` | Legacy webhook timeout fallback (ms) |
+| `WEBHOOK_CONNECT_TIMEOUT_MS` | no | `3000` | Outbound webhook connect budget (ms) |
+| `WEBHOOK_READ_TIMEOUT_MS` | no | `5000` | Outbound webhook read budget (ms) |
+| `WEBHOOK_MAX_RESPONSE_BYTES` | no | `65536` | Max drained webhook response body |
+| `WEBHOOK_MAX_ATTEMPTS` | no | `3` | Delivery retry count |
+| `WEBHOOK_BACKOFF_MS` | no | `2000` | Linear backoff between retries (ms) |
+| `WEBHOOK_SIGNATURE_HEADER` | no | `x-cosmos-signature` | HMAC header sent to integrators |
+| `SWAGGER_ENABLED` | no | off in `production` | Publish `/docs` (Express middleware, no guards) |
+| `OPENAPI_SERVER_URL` | no | — | Gateway host stamped into exported OpenAPI |
+| `BLINDPAY_API_KEY` | no | — | BlindPay platform API key |
+| `BLINDPAY_INSTANCE_ID` | when API key set | — | BlindPay instance id (`in_...`) |
+| `BLINDPAY_BASE_URL` | no | `https://api.blindpay.com/v1` | BlindPay API base URL |
+| `BLINDPAY_WEBHOOK_SECRET` | when API key set | — | Svix secret for inbound BlindPay webhooks |
+| `BLINDPAY_TIMEOUT_MS` | no | `15000` | BlindPay HTTP client timeout (ms) |
+| `ADMIN_API_CREDENTIALS` | no | — | JSON admin bearer secrets (issue #34) |
+| `KYC_REDIRECT_URL_WHITELIST` | no | — | Per-consumer KYC redirect host allow-list |
+
+Legacy `STELLAR_HORIZON_URL` is rejected at boot — use
+`STELLAR_HORIZON_URL_PUBLIC` / `STELLAR_HORIZON_URL_TESTNET` instead.
 
 ## Getting started
 

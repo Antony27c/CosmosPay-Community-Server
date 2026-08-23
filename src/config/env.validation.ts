@@ -1,14 +1,28 @@
 import { plainToInstance } from 'class-transformer';
 import {
+  IsBooleanString,
   IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUrl,
   Max,
   Min,
   validateSync,
+  type ValidationError,
 } from 'class-validator';
+import { StrKey } from '@stellar/stellar-sdk';
+
+const URL_OPTIONS = {
+  require_protocol: true,
+  protocols: ['http', 'https'],
+  require_tld: false,
+};
+
+const DEFAULT_SWAP_FEE_BPS = 50;
+const DEFAULT_SWAP_SLIPPAGE_BPS = 50;
+const DEFAULT_SWAP_MAX_SLIPPAGE_BPS = 500;
 
 /**
  * Schema used by ConfigModule to fail fast at boot if the environment is
@@ -17,7 +31,7 @@ import {
  */
 class EnvironmentVariables {
   @IsOptional()
-  @IsString()
+  @IsIn(['development', 'test', 'production'])
   NODE_ENV?: string;
 
   @IsOptional()
@@ -48,6 +62,18 @@ class EnvironmentVariables {
 
   @IsOptional()
   @IsString()
+  APISIX_ENVIRONMENT_HEADER?: string;
+
+  @IsOptional()
+  @IsString()
+  APISIX_ROLE_HEADER?: string;
+
+  @IsOptional()
+  @IsString()
+  APISIX_PERMISSIONS_HEADER?: string;
+
+  @IsOptional()
+  @IsString()
   APISIX_ORGANIZATION_HEADER?: string;
 
   @IsOptional()
@@ -63,8 +89,12 @@ class EnvironmentVariables {
   STELLAR_NETWORK?: string;
 
   @IsOptional()
-  @IsString()
-  STELLAR_HORIZON_URL?: string;
+  @IsUrl(URL_OPTIONS)
+  STELLAR_HORIZON_URL_PUBLIC?: string;
+
+  @IsOptional()
+  @IsUrl(URL_OPTIONS)
+  STELLAR_HORIZON_URL_TESTNET?: string;
 
   @IsOptional()
   @IsString()
@@ -98,6 +128,70 @@ class EnvironmentVariables {
   @Max(10000)
   STELLAR_SWAP_MAX_SLIPPAGE_BPS?: number;
 
+  // --- On-chain observer + payment intent lifetime ---
+  @IsOptional()
+  @IsBooleanString()
+  OBSERVER_ENABLED?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1000)
+  OBSERVER_INTERVAL_MS?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  OBSERVER_BATCH_SIZE?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  PAYMENT_INTENT_TTL_SECONDS?: number;
+
+  // --- Outbound webhooks ---
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  WEBHOOK_TIMEOUT_MS?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  WEBHOOK_CONNECT_TIMEOUT_MS?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  WEBHOOK_READ_TIMEOUT_MS?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  WEBHOOK_MAX_RESPONSE_BYTES?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  WEBHOOK_MAX_ATTEMPTS?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  WEBHOOK_BACKOFF_MS?: number;
+
+  @IsOptional()
+  @IsString()
+  WEBHOOK_SIGNATURE_HEADER?: string;
+
+  // --- OpenAPI / Swagger ---
+  @IsOptional()
+  @IsUrl(URL_OPTIONS)
+  OPENAPI_SERVER_URL?: string;
+
+  @IsOptional()
+  @IsBooleanString()
+  SWAGGER_ENABLED?: string;
+
   // --- BlindPay (onramp / offramp / KYC rails) ---
   // All optional: the service boots without them; the BlindPay client fails with
   // a clear 503 only when a BlindPay-backed route is actually exercised.
@@ -110,7 +204,7 @@ class EnvironmentVariables {
   BLINDPAY_INSTANCE_ID?: string;
 
   @IsOptional()
-  @IsString()
+  @IsUrl(URL_OPTIONS)
   BLINDPAY_BASE_URL?: string;
 
   @IsOptional()
@@ -141,7 +235,44 @@ class EnvironmentVariables {
   KYC_REDIRECT_URL_WHITELIST?: string;
 }
 
+function formatValidationErrors(errors: ValidationError[]): string {
+  return errors
+    .flatMap((error) => {
+      const property = error.property;
+      const constraints = Object.values(error.constraints ?? {});
+      return constraints.map((message) => `${property}: ${message}`);
+    })
+    .join('\n');
+}
+
+function isNonEmpty(value: string | undefined): boolean {
+  return value != null && value.trim() !== '';
+}
+
+function effectiveSwapFeeBps(validated: EnvironmentVariables): number {
+  return validated.STELLAR_SWAP_FEE_BPS ?? DEFAULT_SWAP_FEE_BPS;
+}
+
+function effectiveSlippageBps(validated: EnvironmentVariables): number {
+  return validated.STELLAR_SWAP_SLIPPAGE_BPS ?? DEFAULT_SWAP_SLIPPAGE_BPS;
+}
+
+function effectiveMaxSlippageBps(validated: EnvironmentVariables): number {
+  return (
+    validated.STELLAR_SWAP_MAX_SLIPPAGE_BPS ?? DEFAULT_SWAP_MAX_SLIPPAGE_BPS
+  );
+}
+
 export function validateEnv(config: Record<string, unknown>) {
+  const legacyHorizonUrl = config.STELLAR_HORIZON_URL;
+  if (typeof legacyHorizonUrl === 'string' && legacyHorizonUrl.trim() !== '') {
+    throw new Error(
+      'STELLAR_HORIZON_URL is no longer used: rename it to ' +
+        'STELLAR_HORIZON_URL_PUBLIC or STELLAR_HORIZON_URL_TESTNET so the ' +
+        'service actually points at your Horizon instance.',
+    );
+  }
+
   const validated = plainToInstance(EnvironmentVariables, config, {
     enableImplicitConversion: true,
   });
@@ -152,9 +283,7 @@ export function validateEnv(config: Record<string, unknown>) {
 
   if (errors.length > 0) {
     throw new Error(
-      `Invalid environment configuration:\n${errors
-        .map((e) => Object.values(e.constraints ?? {}).join(', '))
-        .join('\n')}`,
+      `Invalid environment configuration:\n${formatValidationErrors(errors)}`,
     );
   }
 
@@ -164,6 +293,49 @@ export function validateEnv(config: Record<string, unknown>) {
         'carry the shared secret APISIX injects. Set it to match the dev platform ' +
         "(COSMOS_GATEWAY_SECRET) and the gateway route's X-Gateway-Secret.",
     );
+  }
+
+  const feeBps = effectiveSwapFeeBps(validated);
+  if (feeBps > 0) {
+    const wallet = validated.STELLAR_SWAP_FEE_WALLET?.trim() ?? '';
+    if (!wallet) {
+      throw new Error(
+        'STELLAR_SWAP_FEE_WALLET is required when STELLAR_SWAP_FEE_BPS is greater ' +
+          'than zero: swap fees are paid to this Stellar account (G...). Set the ' +
+          'wallet or disable the fee with STELLAR_SWAP_FEE_BPS=0.',
+      );
+    }
+    if (!StrKey.isValidEd25519PublicKey(wallet)) {
+      throw new Error(
+        'STELLAR_SWAP_FEE_WALLET must be a valid Stellar account address (G...) ' +
+          'when STELLAR_SWAP_FEE_BPS is greater than zero.',
+      );
+    }
+  }
+
+  const slippageBps = effectiveSlippageBps(validated);
+  const maxSlippageBps = effectiveMaxSlippageBps(validated);
+  if (slippageBps > maxSlippageBps) {
+    throw new Error(
+      'STELLAR_SWAP_SLIPPAGE_BPS must be less than or equal to ' +
+        'STELLAR_SWAP_MAX_SLIPPAGE_BPS so callers cannot request slippage ' +
+        'above the configured hard cap.',
+    );
+  }
+
+  if (isNonEmpty(validated.BLINDPAY_API_KEY)) {
+    if (!isNonEmpty(validated.BLINDPAY_INSTANCE_ID)) {
+      throw new Error(
+        'BLINDPAY_INSTANCE_ID is required when BLINDPAY_API_KEY is set: every ' +
+          'BlindPay API call is scoped to a platform instance id (in_...).',
+      );
+    }
+    if (!isNonEmpty(validated.BLINDPAY_WEBHOOK_SECRET)) {
+      throw new Error(
+        'BLINDPAY_WEBHOOK_SECRET is required when BLINDPAY_API_KEY is set: inbound ' +
+          'BlindPay webhooks are verified with the Svix signing secret (whsec_...).',
+      );
+    }
   }
 
   return validated;
