@@ -1,3 +1,5 @@
+import { parseAdminCredentials, type AdminCredential } from '../admin/admin-auth';
+
 /**
  * Centralized, typed configuration loaded from environment variables.
  * Consumed via Nest's ConfigService<AppConfig, true>.
@@ -23,6 +25,13 @@ export interface AppConfig {
     organizationHeader: string;
     planHeader: string;
     swapFeeBpsHeader: string;
+  };
+  admin: {
+    /**
+     * Platform-admin credentials (issue #34). Empty ⇒ fail closed (no admin access).
+     * Presented as `Authorization: Bearer <secret>`.
+     */
+    credentials: AdminCredential[];
   };
   stellar: {
     // Fallback network when the API key environment is not forwarded
@@ -114,6 +123,9 @@ export default (): AppConfig => ({
     swapFeeBpsHeader: (
       process.env.APISIX_SWAP_FEE_BPS_HEADER ?? 'x-plan-swap-fee-bps'
     ).toLowerCase(),
+  },
+  admin: {
+    credentials: parseAdminCredentials(process.env.ADMIN_API_CREDENTIALS),
   },
   stellar: {
     network:

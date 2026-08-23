@@ -3,27 +3,60 @@ import {
   ExecutionContext,
   ForbiddenException,
   Injectable,
+  UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
+import {
+  roleSatisfies,
+  verifyAdminBearer,
+  type AdminRole,
+} from '../../admin/admin-auth';
+import { AppConfig } from '../../config/configuration';
+import { ADMIN_ROLE_KEY } from '../decorators/require-admin-role.decorator';
 
 /**
- * Guards the platform-admin (global, cross-consumer) endpoints. ApisixGuard has
- * already proven the request came through the gateway (valid X-Gateway-Secret); this
- * additionally requires the trusted `X-Cosmos-Admin` marker. That header is **stripped
- * from any client request by APISIX** (it's on the route's proxy-rewrite remove list)
- * and is set ONLY by the dev platform's server-to-server admin proxy, which first
- * verifies the signed-in user is a platform owner/admin. So an external API-key caller
- * can never reach these unscoped, see-everything endpoints — only the owner console can.
+ * Platform-admin gate (issue #34).
+ *
+ * ApisixGuard already proved the request came through the gateway. This guard
+ * additionally requires a real admin Bearer credential configured in
+ * `ADMIN_API_CREDENTIALS` — the legacy plaintext `X-Cosmos-Admin: 1` marker is
+ * no longer accepted. Role checks (`@RequireAdminRole`) distinguish read from
+ * write so viewers cannot mutate.
  */
 @Injectable()
 export class AdminGuard implements CanActivate {
+  constructor(
+    private readonly config: ConfigService<AppConfig, true>,
+    private readonly reflector: Reflector,
+  ) {}
+
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<Request>();
-    const raw = request.headers['x-cosmos-admin'];
-    const value = Array.isArray(raw) ? raw[0] : raw;
-    if (value !== '1') {
-      throw new ForbiddenException('Platform admin access required');
+    const { credentials } = this.config.get('admin', { infer: true });
+
+    const rawAuth = request.headers.authorization;
+    const authorization = Array.isArray(rawAuth) ? rawAuth[0] : rawAuth;
+    const principal = verifyAdminBearer(authorization, credentials);
+    if (!principal) {
+      throw new UnauthorizedException('Valid admin credentials required');
     }
+
+    request.adminPrincipal = principal;
+
+    const required =
+      this.reflector.getAllAndOverride<AdminRole | undefined>(ADMIN_ROLE_KEY, [
+        context.getHandler(),
+        context.getClass(),
+      ]) ?? 'read';
+
+    if (!roleSatisfies(principal.role, required)) {
+      throw new ForbiddenException(
+        `Admin role '${required}' required (have '${principal.role}')`,
+      );
+    }
+
     return true;
   }
 }

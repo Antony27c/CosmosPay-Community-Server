@@ -1,0 +1,41 @@
+# Issue #34 — evidence (admin auth + audit)
+
+## Guard + credential suite
+
+```text
+$ npx jest src/admin/admin-auth.spec.ts src/common/guards/admin.guard.spec.ts --no-coverage
+
+Test Suites: 2 passed, 2 total
+Tests:       17 passed, 17 total
+```
+
+## HTTP matrix (401 / 403 per mutator)
+
+```text
+$ npx jest --config ./test/jest-e2e.json test/admin-auth.e2e-spec.ts
+
+Test Suites: 1 passed, 1 total
+Tests:       16 passed, 16 total
+```
+
+Cases covered for each of the 4 mutators:
+- no admin credential → 401
+- read-only Bearer → 403
+- write Bearer → 2xx + audit row
+
+Also:
+- legacy `X-Cosmos-Admin: 1` → 401
+- `GET /v1/admin/audit-logs` consultable
+- `DELETE /v1/admin/audit-logs` → 404 (no delete API)
+
+## Sample responses
+
+401 (missing Bearer):
+```json
+{ "statusCode": 401, "message": "Valid admin credentials required" }
+```
+
+403 (read on write endpoint):
+```json
+{ "statusCode": 403, "message": "Admin role 'write' required (have 'read')" }
+```

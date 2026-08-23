@@ -45,8 +45,10 @@ export interface GatewayConsumer {
 }
 
 declare module 'express' {
-  // Augment Express' Request so the rest of the app can read req.gatewayConsumer.
+  // Augment Express' Request so the rest of the app can read req.gatewayConsumer
+  // and (for platform-admin routes) req.adminPrincipal.
   interface Request {
     gatewayConsumer?: GatewayConsumer;
+    adminPrincipal?: import('../../admin/admin-auth').AdminPrincipal;
   }
 }

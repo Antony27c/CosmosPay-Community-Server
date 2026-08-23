@@ -3058,6 +3058,12 @@ components:
         enabled:
           type: boolean
           example: true
+        destinationBlocked:
+          type: boolean
+          example: false
+          description: True when the URL failed public-destination checks (SSRF policy).
+            Deliveries are skipped until the URL is updated to a safe https
+            endpoint.
         eventTypes:
           type: array
           example: &a19
@@ -3104,6 +3110,7 @@ components:
         - url
         - description
         - enabled
+        - destinationBlocked
         - eventTypes
         - createdAt
         - updatedAt
@@ -3124,6 +3131,12 @@ components:
         enabled:
           type: boolean
           example: true
+        destinationBlocked:
+          type: boolean
+          example: false
+          description: True when the URL failed public-destination checks (SSRF policy).
+            Deliveries are skipped until the URL is updated to a safe https
+            endpoint.
         eventTypes:
           type: array
           example: *a19
@@ -3142,6 +3155,7 @@ components:
         - url
         - description
         - enabled
+        - destinationBlocked
         - eventTypes
         - createdAt
         - updatedAt

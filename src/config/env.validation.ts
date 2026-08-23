@@ -122,25 +122,14 @@ class EnvironmentVariables {
   @Min(1)
   BLINDPAY_TIMEOUT_MS?: number;
 
+  /**
+   * Platform-admin credentials JSON (issue #34). Optional at boot — empty means
+   * admin routes fail closed. Shape:
+   * [{"id":"viewer","secret":"…","role":"read"},{"id":"owner","secret":"…","role":"write"}]
+   */
   @IsOptional()
-  @IsInt()
-  @Min(1)
-  WEBHOOK_CONNECT_TIMEOUT_MS?: number;
-
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  WEBHOOK_READ_TIMEOUT_MS?: number;
-
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  WEBHOOK_MAX_RESPONSE_BYTES?: number;
-
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  WEBHOOK_TIMEOUT_MS?: number;
+  @IsString()
+  ADMIN_API_CREDENTIALS?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {
