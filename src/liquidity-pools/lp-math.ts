@@ -1,4 +1,9 @@
-import { fromStroops } from '../swaps/swap-math';
+import {
+  applySlippage,
+  computeFee,
+  fromStroops,
+  toStroops,
+} from '../swaps/swap-math';
 
 /**
  * Integer math for AMM liquidity pool operations, in stroops (bigint) like
@@ -72,4 +77,97 @@ export function proportionalShare(
     throw new RangeError('shares must be within [0, totalShares]');
   }
   return (sharesStroops * reserveStroops) / totalSharesStroops;
+}
+
+/**
+ * Average-cost basis of shares still held, derived from our own SUCCEEDED
+ * deposits (which recorded `sharesReceived` + settled amounts) and withdrawals.
+ * Deposits whose basis was never captured do not count — they are taxed nothing.
+ * All values are stroop bigints. Formula is unchanged from the previous inline
+ * loop in `LiquidityPoolsService.costBasis`.
+ */
+export interface CostBasisOp {
+  kind: 'DEPOSIT' | 'WITHDRAW';
+  shares: string | null;
+  sharesReceived: string | null;
+  settledAmountA: string | null;
+  settledAmountB: string | null;
+  amountA: string;
+  amountB: string;
+}
+
+export function aggregateCostBasis(ops: CostBasisOp[]): {
+  depositedShares: bigint;
+  remainingShares: bigint;
+  costA: bigint;
+  costB: bigint;
+} {
+  let depositedShares = 0n;
+  let withdrawnShares = 0n;
+  let costA = 0n;
+  let costB = 0n;
+  for (const o of ops) {
+    if (o.kind === 'DEPOSIT') {
+      if (!o.sharesReceived) continue; // basis not captured → no known cost
+      depositedShares += toStroops(o.sharesReceived);
+      costA += toStroops(o.settledAmountA ?? o.amountA);
+      costB += toStroops(o.settledAmountB ?? o.amountB);
+    } else if (o.shares) {
+      withdrawnShares += toStroops(o.shares);
+    }
+  }
+  const remaining = depositedShares - withdrawnShares;
+  return {
+    depositedShares,
+    remainingShares: remaining > 0n ? remaining : 0n,
+    costA,
+    costB,
+  };
+}
+
+/**
+ * Platform commission on an LP withdraw: charged ONLY on the gain
+ * (slippage-protected redemption of covered shares − proportional cost basis),
+ * and only for shares whose cost basis we recorded. Shares with no known basis
+ * are taxed nothing; a loss is taxed nothing. Formula is unchanged from the
+ * previous inline block in `LiquidityPoolsService.withdraw`.
+ */
+export function computeWithdrawCommission(input: {
+  shares: bigint;
+  totalShares: bigint;
+  remainingShares: bigint;
+  depositedShares: bigint;
+  costA: bigint;
+  costB: bigint;
+  reserveA: bigint;
+  reserveB: bigint;
+  slippageBps: number;
+  feeBps: number;
+}): { feeA: bigint; feeB: bigint } {
+  if (input.feeBps <= 0) return { feeA: 0n, feeB: 0n };
+  const covered =
+    input.shares < input.remainingShares ? input.shares : input.remainingShares;
+  if (covered <= 0n || input.depositedShares <= 0n) {
+    return { feeA: 0n, feeB: 0n };
+  }
+  const redeemedA = applySlippage(
+    proportionalShare(covered, input.totalShares, input.reserveA),
+    input.slippageBps,
+  );
+  const redeemedB = applySlippage(
+    proportionalShare(covered, input.totalShares, input.reserveB),
+    input.slippageBps,
+  );
+  const basisA = (input.costA * covered) / input.depositedShares;
+  const basisB = (input.costB * covered) / input.depositedShares;
+  return {
+    feeA: computeFee(
+      redeemedA > basisA ? redeemedA - basisA : 0n,
+      input.feeBps,
+    ),
+    feeB: computeFee(
+      redeemedB > basisB ? redeemedB - basisB : 0n,
+      input.feeBps,
+    ),
+  };
 }

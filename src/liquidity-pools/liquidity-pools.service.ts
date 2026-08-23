@@ -27,13 +27,20 @@ import type {
   WebhookEventType,
 } from '../../generated/prisma/client';
 import { WEBHOOK_EVENT, WebhookEventPayload } from '../webhooks/webhook-events';
+import { applySlippage, fromStroops, toStroops } from '../swaps/swap-math';
 import {
-  applySlippage,
-  computeFee,
-  fromStroops,
-  toStroops,
-} from '../swaps/swap-math';
-import { matchDeposit, priceBounds, proportionalShare } from './lp-math';
+  aggregateCostBasis,
+  computeWithdrawCommission,
+  matchDeposit,
+  priceBounds,
+  proportionalShare,
+} from './lp-math';
+import {
+  LP_CAN_SUBMIT_STATUSES,
+  LP_CAN_SUCCEED_STATUSES,
+  LP_IN_FLIGHT_STATUSES,
+  type LpOperationStatus,
+} from './lp-operation-transitions';
 import { DepositLiquidityDto } from './dto/deposit-liquidity.dto';
 import { QueryLiquidityOperationsDto } from './dto/query-liquidity-operations.dto';
 import { QueryLiquidityPoolsDto } from './dto/query-pools.dto';
@@ -446,24 +453,20 @@ export class LiquidityPoolsService {
     let feeB = 0n;
     if (feeBps > 0) {
       const basis = await this.costBasis(local.id, dto.source, dto.poolId);
-      const covered =
-        shares < basis.remainingShares ? shares : basis.remainingShares;
-      if (covered > 0n && basis.depositedShares > 0n) {
-        // Guaranteed redemption for the covered shares (slippage-protected), so
-        // the fee payment is always covered by what the withdraw returns.
-        const redeemedA = applySlippage(
-          proportionalShare(covered, total, toStroops(resA.amount)),
-          slippageBps,
-        );
-        const redeemedB = applySlippage(
-          proportionalShare(covered, total, toStroops(resB.amount)),
-          slippageBps,
-        );
-        const basisA = (basis.costA * covered) / basis.depositedShares;
-        const basisB = (basis.costB * covered) / basis.depositedShares;
-        feeA = computeFee(redeemedA > basisA ? redeemedA - basisA : 0n, feeBps);
-        feeB = computeFee(redeemedB > basisB ? redeemedB - basisB : 0n, feeBps);
-      }
+      const fees = computeWithdrawCommission({
+        shares,
+        totalShares: total,
+        remainingShares: basis.remainingShares,
+        depositedShares: basis.depositedShares,
+        costA: basis.costA,
+        costB: basis.costB,
+        reserveA: toStroops(resA.amount),
+        reserveB: toStroops(resB.amount),
+        slippageBps,
+        feeBps,
+      });
+      feeA = fees.feeA;
+      feeB = fees.feeB;
     }
     if (feeA + feeB > 0n && !feeWallet) {
       throw new ServiceUnavailableException(
@@ -586,7 +589,9 @@ export class LiquidityPoolsService {
   /**
    * Relays the signed transaction to the network. The signed envelope must be
    * the one we built (hash-verified against the stored operation). A network
-   * rejection finalizes the operation as FAILED; an unreachable network is a
+   * rejection finalizes the operation as FAILED **only if it is still
+   * in-flight** — a concurrent observer that already marked it SUCCEEDED (and
+   * captured cost basis) must not be overwritten. An unreachable network is a
    * 503 and leaves it re-submittable.
    */
   async submit(
@@ -627,42 +632,62 @@ export class LiquidityPoolsService {
       );
     }
 
-    await this.setStatus(
-      op.id,
-      consumer.username,
-      'SUBMITTED',
-      'LIQUIDITY_SUBMITTED',
-    );
+    const submitted = await this.guardedUpdate(op.id, LP_CAN_SUBMIT_STATUSES, {
+      status: 'SUBMITTED',
+    });
+    // Observer may have liquidated the row between our read and this write.
+    if (submitted.operation.status === 'SUCCEEDED') {
+      return {
+        submitted: true,
+        status: 'SUCCEEDED',
+        txHash: submitted.operation.txHash,
+        operation: await this.withQr(submitted.operation),
+      };
+    }
+    if (submitted.operation.status !== 'SUBMITTED') {
+      throw new BadRequestException(
+        `Cannot submit a ${submitted.operation.status} liquidity pool operation`,
+      );
+    }
+    if (submitted.applied) {
+      this.emit(consumer.username, 'LIQUIDITY_SUBMITTED', submitted.operation);
+    }
 
     try {
       const res = await this.stellar
         .server(op.network as StellarNetwork)
         .submitTransaction(tx);
-      const succeeded = await this.prisma.liquidityPoolOperation.update({
-        where: { id: op.id },
-        data: { status: 'SUCCEEDED', txHash: res.hash },
-      });
-      this.emit(consumer.username, 'LIQUIDITY_SUCCEEDED', succeeded);
-      // Record the deposit's cost basis for future withdraw commission.
-      await this.captureDepositBasis(succeeded);
+      const succeeded = await this.finalizeSucceeded(
+        op.id,
+        consumer.username,
+        res.hash,
+      );
       this.logger.log(
         `LP operation ${op.id} submitted and confirmed (tx=${res.hash})`,
       );
       return {
         submitted: true,
         status: 'SUCCEEDED',
-        txHash: res.hash,
-        operation: await this.withQr(succeeded),
+        txHash: succeeded.operation.txHash,
+        operation: await this.withQr(succeeded.operation),
       };
     } catch (err) {
       const resultCodes = this.extractResultCodes(err);
       if (resultCodes) {
-        const failed = await this.setStatus(
-          op.id,
-          consumer.username,
-          'FAILED',
-          'LIQUIDITY_FAILED',
-        );
+        const failed = await this.finalizeFailed(op.id, consumer.username);
+        if (failed.operation.status === 'SUCCEEDED') {
+          // Observer already settled this tx on-chain. Do not report failure
+          // and do not touch the captured cost basis.
+          this.logger.log(
+            `LP operation ${op.id} Horizon rejection ignored; already SUCCEEDED`,
+          );
+          return {
+            submitted: true,
+            status: 'SUCCEEDED',
+            txHash: failed.operation.txHash,
+            operation: await this.withQr(failed.operation),
+          };
+        }
         this.logger.warn(
           `LP operation ${op.id} rejected on submit: ${resultCodes.join(', ')}`,
         );
@@ -671,7 +696,7 @@ export class LiquidityPoolsService {
           status: 'FAILED',
           reason: 'Transaction rejected by the network',
           resultCodes,
-          operation: await this.withQr(failed),
+          operation: await this.withQr(failed.operation),
         };
       }
       this.logger.error(`LP operation ${op.id} submission error`, err);
@@ -726,18 +751,78 @@ export class LiquidityPoolsService {
   }
 
   // ── Status transitions ──────────────────────────────────────────────────────
-  private async setStatus(
+  /**
+   * Optimistic status guard: the UPDATE only matches rows still in `from`.
+   * Never writes cost-basis columns (`sharesReceived` / `settledAmountA` /
+   * `settledAmountB`), so an error transition cannot clobber a captured basis.
+   */
+  private async guardedUpdate(
+    id: string,
+    from: readonly LpOperationStatus[],
+    data: { status: SwapStatus; txHash?: string },
+  ): Promise<{ applied: boolean; operation: LiquidityPoolOperation }> {
+    const result = await this.prisma.liquidityPoolOperation.updateMany({
+      where: { id, status: { in: [...from] } },
+      data,
+    });
+    const operation =
+      await this.prisma.liquidityPoolOperation.findUniqueOrThrow({
+        where: { id },
+      });
+    return { applied: result.count > 0, operation };
+  }
+
+  /**
+   * Promotes an in-flight (or falsely-FAILED) operation to SUCCEEDED and
+   * captures deposit cost basis. Idempotent if already SUCCEEDED. Used by
+   * submit and the settlement observer so both writers share the same guard.
+   */
+  async finalizeSucceeded(
     id: string,
     username: string,
-    status: SwapStatus,
-    event: WebhookEventType,
-  ): Promise<LiquidityPoolOperation> {
-    const updated = await this.prisma.liquidityPoolOperation.update({
-      where: { id },
-      data: { status },
-    });
-    this.emit(username, event, updated);
-    return updated;
+    txHash?: string,
+  ): Promise<{ applied: boolean; operation: LiquidityPoolOperation }> {
+    const { applied, operation } = await this.guardedUpdate(
+      id,
+      LP_CAN_SUCCEED_STATUSES,
+      { status: 'SUCCEEDED', ...(txHash ? { txHash } : {}) },
+    );
+    if (applied) this.emit(username, 'LIQUIDITY_SUCCEEDED', operation);
+    if (operation.status === 'SUCCEEDED') {
+      await this.captureDepositBasis(operation);
+      const fresh = await this.prisma.liquidityPoolOperation.findUniqueOrThrow({
+        where: { id },
+      });
+      return { applied, operation: fresh };
+    }
+    return { applied, operation };
+  }
+
+  /**
+   * Marks FAILED only while the row is still in-flight. A liquidated
+   * (`SUCCEEDED`) operation is left untouched — including its cost basis.
+   */
+  async finalizeFailed(
+    id: string,
+    username: string,
+  ): Promise<{ applied: boolean; operation: LiquidityPoolOperation }> {
+    const { applied, operation } = await this.guardedUpdate(
+      id,
+      LP_IN_FLIGHT_STATUSES,
+      { status: 'FAILED' },
+    );
+    if (applied) this.emit(username, 'LIQUIDITY_FAILED', operation);
+    return { applied, operation };
+  }
+
+  /**
+   * Marks EXPIRED only while the row is still in-flight. Never degrades a
+   * liquidated operation.
+   */
+  async finalizeExpired(
+    id: string,
+  ): Promise<{ applied: boolean; operation: LiquidityPoolOperation }> {
+    return this.guardedUpdate(id, LP_IN_FLIGHT_STATUSES, { status: 'EXPIRED' });
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -940,38 +1025,21 @@ export class LiquidityPoolsService {
         amountB: true,
       },
     });
-    let depositedShares = 0n;
-    let withdrawnShares = 0n;
-    let costA = 0n;
-    let costB = 0n;
-    for (const o of ops) {
-      if (o.kind === 'DEPOSIT') {
-        if (!o.sharesReceived) continue; // basis not captured → no known cost
-        depositedShares += toStroops(o.sharesReceived);
-        costA += toStroops(o.settledAmountA ?? o.amountA);
-        costB += toStroops(o.settledAmountB ?? o.amountB);
-      } else if (o.shares) {
-        withdrawnShares += toStroops(o.shares);
-      }
-    }
-    const remaining = depositedShares - withdrawnShares;
-    return {
-      depositedShares,
-      remainingShares: remaining > 0n ? remaining : 0n,
-      costA,
-      costB,
-    };
+    return aggregateCostBasis(ops);
   }
 
   /**
    * Records a settled deposit's cost basis (shares minted + reserves actually
    * deposited) from its on-chain `liquidity_pool_deposited` effect, so a later
    * withdraw can be taxed only on the gain. Idempotent: a no-op unless this is a
-   * DEPOSIT whose basis has not been captured yet. Best-effort — a Horizon
-   * hiccup just leaves the basis uncaptured (that deposit is then taxed nothing).
+   * SUCCEEDED DEPOSIT whose basis has not been captured yet. Best-effort — a
+   * Horizon hiccup just leaves the basis uncaptured (that deposit is then taxed
+   * nothing). The UPDATE is itself guarded: it will not write over an existing
+   * basis or onto a row that is no longer SUCCEEDED.
    */
   async captureDepositBasis(op: LiquidityPoolOperation): Promise<void> {
     if (op.kind !== 'DEPOSIT' || op.sharesReceived != null) return;
+    if (op.status !== 'SUCCEEDED') return;
     try {
       const page = await this.stellar
         .server(op.network as StellarNetwork)
@@ -992,8 +1060,13 @@ export class LiquidityPoolsService {
       const keyB =
         op.assetB === 'native' ? 'native' : `${op.assetB}:${op.assetBIssuer}`;
       const reserves = eff.reserves_deposited ?? [];
-      await this.prisma.liquidityPoolOperation.update({
-        where: { id: op.id },
+      const result = await this.prisma.liquidityPoolOperation.updateMany({
+        where: {
+          id: op.id,
+          kind: 'DEPOSIT',
+          status: 'SUCCEEDED',
+          sharesReceived: null,
+        },
         data: {
           sharesReceived: eff.shares_received,
           settledAmountA:
@@ -1002,9 +1075,11 @@ export class LiquidityPoolsService {
             reserves.find((r) => r.asset === keyB)?.amount ?? op.amountB,
         },
       });
-      this.logger.log(
-        `Captured cost basis for deposit ${op.id}: ${eff.shares_received} shares`,
-      );
+      if (result.count > 0) {
+        this.logger.log(
+          `Captured cost basis for deposit ${op.id}: ${eff.shares_received} shares`,
+        );
+      }
     } catch {
       this.logger.warn(`Failed to capture cost basis for deposit ${op.id}`);
     }
