@@ -19,6 +19,9 @@ async function generate(): Promise<void> {
   process.env.DATABASE_URL ??=
     'postgresql://openapi:openapi@localhost:5432/openapi';
   process.env.APISIX_GATEWAY_SECRET ??= 'openapi-generation-only';
+  // Default swap fee bps is 50; env validation requires a fee wallet when > 0.
+  process.env.STELLAR_SWAP_FEE_WALLET ??=
+    'GARMB7W3FCR3GKIM3FLWVJASC2PUZ4VHUJZTNJVWWKNTCJNKO6TBCT76';
 
   // Import only after the offline defaults are set: ConfigModule validates the
   // environment as soon as AppModule is evaluated.
