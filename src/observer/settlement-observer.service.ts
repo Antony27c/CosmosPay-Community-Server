@@ -124,27 +124,26 @@ export class SettlementObserverService
       const settlement = await this.settlementOf(row.network, row.txHash);
       const username = row.consumer.apisixUsername;
       if (settlement === 'succeeded') {
-        const updated = await this.prisma.liquidityPoolOperation.update({
-          where: { id: row.id },
-          data: { status: 'SUCCEEDED' },
-        });
-        this.emit(username, 'LIQUIDITY_SUCCEEDED', updated);
-        // Record the deposit's cost basis for future withdraw commission.
-        await this.liquidity.captureDepositBasis(updated);
-        this.logger.log(`Reconciled LP operation ${row.id} → SUCCEEDED`);
+        const { applied } = await this.liquidity.finalizeSucceeded(
+          row.id,
+          username,
+        );
+        if (applied) {
+          this.logger.log(`Reconciled LP operation ${row.id} → SUCCEEDED`);
+        }
       } else if (settlement === 'failed') {
-        const updated = await this.prisma.liquidityPoolOperation.update({
-          where: { id: row.id },
-          data: { status: 'FAILED' },
-        });
-        this.emit(username, 'LIQUIDITY_FAILED', updated);
-        this.logger.warn(`Reconciled LP operation ${row.id} → FAILED`);
+        const { applied } = await this.liquidity.finalizeFailed(
+          row.id,
+          username,
+        );
+        if (applied) {
+          this.logger.warn(`Reconciled LP operation ${row.id} → FAILED`);
+        }
       } else if (row.expiresAt && row.expiresAt < now) {
-        await this.prisma.liquidityPoolOperation.update({
-          where: { id: row.id },
-          data: { status: 'EXPIRED' },
-        });
-        this.logger.log(`Expired LP operation ${row.id} (never settled)`);
+        const { applied } = await this.liquidity.finalizeExpired(row.id);
+        if (applied) {
+          this.logger.log(`Expired LP operation ${row.id} (never settled)`);
+        }
       }
     }
   }
@@ -176,11 +175,7 @@ export class SettlementObserverService
     }
   }
 
-  private emit(
-    username: string,
-    type: WebhookEventType,
-    data: unknown,
-  ): void {
+  private emit(username: string, type: WebhookEventType, data: unknown): void {
     this.events.emit(
       WEBHOOK_EVENT,
       new WebhookEventPayload(username, type, data),
