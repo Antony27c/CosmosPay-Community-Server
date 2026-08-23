@@ -11,6 +11,8 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
+import { CurrentConsumer } from '../../common/decorators/current-consumer.decorator';
+import { GatewayConsumer } from '../../common/interfaces/gateway-consumer.interface';
 import { UploadableFile } from '../../blindpay/blindpay.client';
 import { KycMetaService } from './kyc-meta.service';
 import { InitiateTosDto } from './dto/initiate-tos.dto';
@@ -51,8 +53,11 @@ export class KycMetaController {
   @ApiOperation({
     summary: 'Start ToS acceptance; returns the hosted URL (first KYC step)',
   })
-  initiateTos(@Body() dto: InitiateTosDto) {
-    return this.meta.initiateTos(dto);
+  initiateTos(
+    @CurrentConsumer() consumer: GatewayConsumer,
+    @Body() dto: InitiateTosDto,
+  ) {
+    return this.meta.initiateTos(consumer, dto);
   }
 
   @Get('rails')

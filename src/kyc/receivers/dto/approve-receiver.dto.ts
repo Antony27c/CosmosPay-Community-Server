@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString } from 'class-validator';
+import { IsRedirectUrl } from '../../../common/validators/is-redirect-url.validator';
 
 /**
  * Approves a `pending_review` receiver (our owner/admin review gate). The platform
@@ -11,8 +11,8 @@ export class ApproveReceiverDto {
   @ApiProperty({
     example: 'https://dev.cosmospay.lat/kyc/return/org/dev/clz9xreceiver01',
     description:
-      'Where BlindPay redirects the customer after they accept the terms.',
+      'Where BlindPay redirects the customer after they accept the terms. Must be https and on the consumer allow-list.',
   })
-  @IsString()
+  @IsRedirectUrl()
   redirect_url!: string;
 }

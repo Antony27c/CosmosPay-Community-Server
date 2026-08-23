@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsRedirectUrl } from '../../../common/validators/is-redirect-url.validator';
 
 /**
  * Starts BlindPay's terms-of-service acceptance flow. Returns a hosted URL the
@@ -11,9 +12,9 @@ export class InitiateTosDto {
   @ApiProperty({
     example: 'https://yourapp.com/kyc/return',
     description:
-      'Where BlindPay redirects after acceptance (gets ?tos_id=...).',
+      'Where BlindPay redirects after acceptance (gets ?tos_id=...). Must be https and on the consumer allow-list.',
   })
-  @IsString()
+  @IsRedirectUrl()
   redirect_url!: string;
 
   @ApiPropertyOptional({

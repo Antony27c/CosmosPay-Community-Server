@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import { GatewayConsumer } from '../../common/interfaces/gateway-consumer.interface';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -20,6 +21,8 @@ import { recordAuditInTransaction } from '../../admin/admin-audit.service';
 import { CreateReceiverDto } from './dto/create-receiver.dto';
 import { UpdateReceiverDto } from './dto/update-receiver.dto';
 import { RequestTosDto } from './dto/request-tos.dto';
+import type { AppConfig } from '../../config/configuration';
+import { assertRedirectAllowed } from '../redirect-url-whitelist';
 
 /** Local placeholder id for a receiver that doesn't exist at BlindPay yet. */
 const LOCAL_PREFIX = 'local_';
@@ -38,6 +41,7 @@ export class ReceiversService {
     private readonly blindpay: BlindpayClient,
     private readonly consumers: ConsumerResolverService,
     private readonly sync: BlindpaySyncService,
+    private readonly config: ConfigService<AppConfig, true>,
   ) {}
 
   /**
@@ -90,6 +94,11 @@ export class ReceiversService {
     const local = await this.consumers.resolve(consumer);
     // Ownership check (404 if the receiver isn't this consumer's) then the shared logic.
     await this.findReceiverOrThrow(local.id, id);
+    assertRedirectAllowed(
+      consumer.username,
+      redirectUrl,
+      this.redirectWhitelist(),
+    );
     return this.approveById(id, redirectUrl);
   }
 
@@ -117,6 +126,7 @@ export class ReceiversService {
       );
     }
     // BlindPay side-effect cannot join the DB transaction; local write + audit can.
+    await this.assertRedirectForReceiver(row.consumerId, redirectUrl);
     const url = await this.tosUrl(redirectUrl, row);
     return this.prisma.$transaction(async (tx) => {
       const receiver = await tx.blindpayReceiver.update({
@@ -131,6 +141,29 @@ export class ReceiversService {
   }
 
   /** Requests BlindPay's hosted ToS acceptance url for a receiver. */
+
+  private redirectWhitelist() {
+    return this.config.get('kyc', { infer: true }).redirectUrlWhitelist;
+  }
+
+  private async assertRedirectForReceiver(
+    consumerId: string,
+    redirectUrl: string,
+  ): Promise<void> {
+    const consumer = await this.prisma.consumer.findUnique({
+      where: { id: consumerId },
+      select: { apisixUsername: true },
+    });
+    if (!consumer) {
+      throw new NotFoundException('Receiver consumer not found');
+    }
+    assertRedirectAllowed(
+      consumer.apisixUsername,
+      redirectUrl,
+      this.redirectWhitelist(),
+    );
+  }
+
   private async tosUrl(
     redirectUrl: string,
     row: BlindpayReceiver,
@@ -164,6 +197,11 @@ export class ReceiversService {
     const local = await this.consumers.resolve(consumer);
     // Ownership check (404 if the receiver isn't this consumer's) then the shared logic.
     await this.findReceiverOrThrow(local.id, id);
+    assertRedirectAllowed(
+      consumer.username,
+      dto.redirect_url,
+      this.redirectWhitelist(),
+    );
     return this.requestTosById(id, dto, cooldownMs);
   }
 
@@ -211,6 +249,7 @@ export class ReceiversService {
     }
 
     // BlindPay side-effect first; local write + audit are transactional.
+    await this.assertRedirectForReceiver(row.consumerId, dto.redirect_url);
     const url = await this.tosUrl(dto.redirect_url, row);
 
     return this.prisma.$transaction(async (tx) => {

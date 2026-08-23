@@ -1,4 +1,8 @@
 import { parseAdminCredentials, type AdminCredential } from '../admin/admin-auth';
+import {
+  parseRedirectUrlWhitelist,
+  type RedirectUrlWhitelist,
+} from '../kyc/redirect-url-whitelist';
 
 /**
  * Centralized, typed configuration loaded from environment variables.
@@ -32,6 +36,13 @@ export interface AppConfig {
      * Presented as `Authorization: Bearer <secret>`.
      */
     credentials: AdminCredential[];
+  };
+  kyc: {
+    /**
+     * Per-consumer redirect_url host allow-list (issue #33).
+     * Empty map ⇒ every consumer fails closed until configured.
+     */
+    redirectUrlWhitelist: RedirectUrlWhitelist;
   };
   stellar: {
     // Fallback network when the API key environment is not forwarded
@@ -126,6 +137,11 @@ export default (): AppConfig => ({
   },
   admin: {
     credentials: parseAdminCredentials(process.env.ADMIN_API_CREDENTIALS),
+  },
+  kyc: {
+    redirectUrlWhitelist: parseRedirectUrlWhitelist(
+      process.env.KYC_REDIRECT_URL_WHITELIST,
+    ),
   },
   stellar: {
     network:

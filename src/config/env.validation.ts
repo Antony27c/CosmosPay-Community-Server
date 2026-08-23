@@ -130,6 +130,15 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   ADMIN_API_CREDENTIALS?: string;
+
+  /**
+   * Per-consumer KYC redirect_url host allow-list (issue #33). Optional at boot —
+   * missing/empty means every consumer fails closed until configured. Shape:
+   * {"cosmos_acme":["acme.com","app.acme.com"]}
+   */
+  @IsOptional()
+  @IsString()
+  KYC_REDIRECT_URL_WHITELIST?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {
