@@ -13,6 +13,9 @@ import type {
 } from '../../generated/prisma/client';
 import { WEBHOOK_EVENT, WebhookEventPayload } from './webhook-events';
 import { buildSignatureHeader } from './webhook-signature';
+import { WebhookDestinationGuard } from './webhook-destination.guard';
+import { consumeResponseBody, webhookAbortSignal } from './webhook-http';
+import { WebhookUrlValidationError } from './webhook-url.validator';
 
 @Injectable()
 export class WebhookDispatcherService {
@@ -21,6 +24,7 @@ export class WebhookDispatcherService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService<AppConfig, true>,
+    private readonly destinations: WebhookDestinationGuard,
   ) {}
 
   /**
@@ -33,6 +37,7 @@ export class WebhookDispatcherService {
     const endpoints = await this.prisma.webhookEndpoint.findMany({
       where: {
         enabled: true,
+        destinationBlocked: false,
         consumer: { apisixUsername: payload.consumerUsername },
       },
     });
@@ -98,8 +103,14 @@ export class WebhookDispatcherService {
     endpoint: WebhookEndpoint,
     delivery: WebhookDelivery,
   ): Promise<WebhookDelivery> {
-    const { maxAttempts, backoffMs, timeoutMs, signatureHeader } =
-      this.config.get('webhooks', { infer: true });
+    const {
+      maxAttempts,
+      backoffMs,
+      connectTimeoutMs,
+      readTimeoutMs,
+      maxResponseBytes,
+      signatureHeader,
+    } = this.config.get('webhooks', { infer: true });
 
     const body = JSON.stringify(delivery.payload);
     let attempts = delivery.attempts;
@@ -108,21 +119,41 @@ export class WebhookDispatcherService {
 
     for (let i = 0; i < maxAttempts; i++) {
       attempts += 1;
-      const timestamp = Math.floor(Date.now() / 1000);
-      const controller = new AbortController();
-      const timer = global.setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        await this.destinations.assertSafe(endpoint.url);
+      } catch (err) {
+        lastError =
+          err instanceof WebhookUrlValidationError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : 'Destination validation failed';
+        responseStatus = null;
+        await this.markDestinationBlocked(endpoint.id, lastError);
+        // Do not retry SSRF / destination failures — DNS will not become safe
+        // by waiting, and we must not open a connection.
+        break;
+      }
+
+      const signal = webhookAbortSignal({
+        connectTimeoutMs,
+        readTimeoutMs,
+      });
 
       try {
         const res = await fetch(endpoint.url, {
           method: 'POST',
-          signal: controller.signal,
+          // Never follow 3xx — webhook receivers must be the registered URL.
+          redirect: 'manual',
+          signal,
           headers: {
             'content-type': 'application/json',
             'user-agent': 'CosmosPay-Webhooks/1.0',
             [signatureHeader]: buildSignatureHeader(
               endpoint.secret,
               body,
-              timestamp,
+              Math.floor(Date.now() / 1000),
             ),
             'x-cosmos-event': delivery.eventType,
             'x-cosmos-event-id': delivery.eventId,
@@ -131,6 +162,8 @@ export class WebhookDispatcherService {
           body,
         });
         responseStatus = res.status;
+
+        await consumeResponseBody(res, maxResponseBytes);
 
         if (res.ok) {
           return this.finalize(
@@ -146,8 +179,6 @@ export class WebhookDispatcherService {
         lastError =
           err instanceof Error ? err.message : 'Unknown delivery error';
         responseStatus = null;
-      } finally {
-        global.clearTimeout(timer);
       }
 
       // Linear backoff before the next attempt (skip after the last one).
@@ -177,9 +208,24 @@ export class WebhookDispatcherService {
     responseStatus: number | null;
     error: string | null;
   }> {
-    const { timeoutMs, signatureHeader } = this.config.get('webhooks', {
+    const {
+      connectTimeoutMs,
+      readTimeoutMs,
+      maxResponseBytes,
+      signatureHeader,
+    } = this.config.get('webhooks', {
       infer: true,
     });
+
+    try {
+      await this.destinations.assertSafe(endpoint.url);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Destination validation failed';
+      await this.markDestinationBlocked(endpoint.id, message);
+      return { ok: false, responseStatus: null, error: message };
+    }
+
     const body = JSON.stringify({
       id: `evt_ping_${randomUUID()}`,
       type: 'ping',
@@ -187,13 +233,16 @@ export class WebhookDispatcherService {
       data: { message: 'Cosmos Pay webhook ping' },
     });
     const timestamp = Math.floor(Date.now() / 1000);
-    const controller = new AbortController();
-    const timer = global.setTimeout(() => controller.abort(), timeoutMs);
+    const signal = webhookAbortSignal({
+      connectTimeoutMs,
+      readTimeoutMs,
+    });
 
     try {
       const res = await fetch(endpoint.url, {
         method: 'POST',
-        signal: controller.signal,
+        redirect: 'manual',
+        signal,
         headers: {
           'content-type': 'application/json',
           'user-agent': 'CosmosPay-Webhooks/1.0',
@@ -206,6 +255,7 @@ export class WebhookDispatcherService {
         },
         body,
       });
+      await consumeResponseBody(res, maxResponseBytes);
       return { ok: res.ok, responseStatus: res.status, error: null };
     } catch (err) {
       return {
@@ -213,9 +263,23 @@ export class WebhookDispatcherService {
         responseStatus: null,
         error: err instanceof Error ? err.message : 'Unknown error',
       };
-    } finally {
-      global.clearTimeout(timer);
     }
+  }
+
+  private async markDestinationBlocked(
+    endpointId: string,
+    reason: string,
+  ): Promise<void> {
+    this.logger.warn(
+      `Marking webhook endpoint ${endpointId} as destinationBlocked: ${reason}`,
+    );
+    await this.prisma.webhookEndpoint.update({
+      where: { id: endpointId },
+      data: {
+        destinationBlocked: true,
+        enabled: false,
+      },
+    });
   }
 
   private finalize(

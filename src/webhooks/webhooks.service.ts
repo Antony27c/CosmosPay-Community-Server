@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { GatewayConsumer } from '../common/interfaces/gateway-consumer.interface';
@@ -10,6 +15,8 @@ import { CreateWebhookEndpointDto } from './dto/create-webhook-endpoint.dto';
 import { UpdateWebhookEndpointDto } from './dto/update-webhook-endpoint.dto';
 import { QueryDeliveriesDto } from './dto/query-deliveries.dto';
 import { WebhookDispatcherService } from './webhook-dispatcher.service';
+import { WebhookDestinationGuard } from './webhook-destination.guard';
+import { WebhookUrlValidationError } from './webhook-url.validator';
 
 // Endpoint without the signing secret — what list/get responses return.
 export type SafeWebhookEndpoint = Omit<WebhookEndpoint, 'secret'>;
@@ -21,6 +28,7 @@ export class WebhooksService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly dispatcher: WebhookDispatcherService,
+    private readonly destinations: WebhookDestinationGuard,
   ) {}
 
   private resolveConsumer(consumer: GatewayConsumer) {
@@ -49,6 +57,7 @@ export class WebhooksService {
     consumer: GatewayConsumer,
     dto: CreateWebhookEndpointDto,
   ): Promise<WebhookEndpoint> {
+    await this.assertUrlAllowed(dto.url);
     const localConsumer = await this.resolveConsumer(consumer);
 
     const endpoint = await this.prisma.webhookEndpoint.create({
@@ -58,6 +67,7 @@ export class WebhooksService {
         secret: this.generateSecret(),
         description: dto.description,
         eventTypes: dto.eventTypes ?? [],
+        destinationBlocked: false,
       },
     });
 
@@ -87,7 +97,15 @@ export class WebhooksService {
     id: string,
     dto: UpdateWebhookEndpointDto,
   ): Promise<SafeWebhookEndpoint> {
-    await this.getOwned(consumer, id);
+    const current = await this.getOwned(consumer, id);
+    if (dto.url !== undefined) {
+      await this.assertUrlAllowed(dto.url);
+    } else if (dto.enabled === true) {
+      // Re-enable only when the stored URL still resolves to a public target.
+      await this.assertUrlAllowed(current.url);
+    }
+
+    const clearBlock = dto.url !== undefined || dto.enabled === true;
     const updated = await this.prisma.webhookEndpoint.update({
       where: { id },
       data: {
@@ -97,6 +115,7 @@ export class WebhooksService {
           : {}),
         ...(dto.enabled !== undefined ? { enabled: dto.enabled } : {}),
         ...(dto.eventTypes !== undefined ? { eventTypes: dto.eventTypes } : {}),
+        ...(clearBlock ? { destinationBlocked: false } : {}),
       },
     });
     this.logger.log(`Updated webhook endpoint ${id} for ${consumer.username}`);
@@ -196,5 +215,16 @@ export class WebhooksService {
       throw new NotFoundException(`Webhook endpoint ${id} not found`);
     }
     return endpoint;
+  }
+
+  private async assertUrlAllowed(url: string): Promise<void> {
+    try {
+      await this.destinations.assertSafe(url);
+    } catch (err) {
+      if (err instanceof WebhookUrlValidationError) {
+        throw new BadRequestException(err.message);
+      }
+      throw err;
+    }
   }
 }

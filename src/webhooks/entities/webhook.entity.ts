@@ -19,6 +19,13 @@ export class WebhookEndpointEntity {
   enabled!: boolean;
 
   @ApiProperty({
+    example: false,
+    description:
+      'True when the URL failed public-destination checks (SSRF policy). Deliveries are skipped until the URL is updated to a safe https endpoint.',
+  })
+  destinationBlocked!: boolean;
+
+  @ApiProperty({
     enum: WebhookEventType,
     isArray: true,
     example: ['PAYMENT_INTENT_SUCCEEDED'],

@@ -15,7 +15,11 @@ export class CreateWebhookEndpointDto {
     description: 'HTTPS URL that will receive POSTed event notifications.',
     example: 'https://integrator.example.com/webhooks/cosmos',
   })
-  @IsUrl({ require_tld: false, require_protocol: true })
+  @IsUrl({
+    require_tld: false,
+    require_protocol: true,
+    protocols: ['https'],
+  })
   url!: string;
 
   @ApiPropertyOptional({ example: 'Production payment events' })

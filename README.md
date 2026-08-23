@@ -139,6 +139,32 @@ Event types: `PAYMENT_INTENT_CREATED`, `PAYMENT_INTENT_UPDATED`,
 Delivery is decoupled via NestJS `EventEmitter2` (`webhook.event`), so emitting a
 notification never blocks the API request that triggered it.
 
+**Outbound destination policy (SSRF):** endpoints must use `https` and resolve
+only to public addresses. Registration rejects loopback, RFC1918 private ranges,
+link-local (`169.254.0.0/16`, including cloud metadata `169.254.169.254`), and
+known metadata hostnames. The same check runs again immediately before each
+delivery (DNS can change after register). The HTTP client uses `redirect: manual`
+(never follows `3xx`), connect/read timeouts from env, and a max response body
+size.
+
+| Variable | Default | Meaning |
+| -------- | ------- | ------- |
+| `WEBHOOK_CONNECT_TIMEOUT_MS` | `3000` | Connect budget (part of AbortSignal timeout) |
+| `WEBHOOK_READ_TIMEOUT_MS` | `5000` | Read budget (part of AbortSignal timeout) |
+| `WEBHOOK_MAX_RESPONSE_BYTES` | `65536` | Cap on drained response body |
+| `WEBHOOK_TIMEOUT_MS` | `5000` | Legacy fallback if the split timeouts are unset |
+| `WEBHOOK_MAX_ATTEMPTS` / `WEBHOOK_BACKOFF_MS` | `3` / `2000` | Retry loop (unchanged) |
+
+**Migrating existing endpoints:** after deploy, run
+
+```bash
+npx ts-node --transpile-only scripts/mark-blocked-webhook-endpoints.ts
+```
+
+Unsafe rows get `destinationBlocked=true` and `enabled=false`. Integrators fix
+the URL with `PATCH /v1/webhooks/:id` `{ "url": "https://…" }` (validation runs
+again and clears the flag), or re-enable after DNS is public.
+
 **Payload** (POST body to the integrator's URL):
 
 ```jsonc

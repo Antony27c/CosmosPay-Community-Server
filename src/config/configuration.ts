@@ -62,7 +62,11 @@ export interface AppConfig {
     ttlSeconds: number;
   };
   webhooks: {
+    // Overall AbortController budget ≈ connect + read (defense in depth).
     timeoutMs: number;
+    connectTimeoutMs: number;
+    readTimeoutMs: number;
+    maxResponseBytes: number;
     maxAttempts: number;
     backoffMs: number;
     signatureHeader: string;
@@ -155,7 +159,25 @@ export default (): AppConfig => ({
     ttlSeconds: parseInt(process.env.PAYMENT_INTENT_TTL_SECONDS ?? '3600', 10),
   },
   webhooks: {
+    // Legacy single timeout kept for callers that still read timeoutMs;
+    // prefer connectTimeoutMs + readTimeoutMs for outbound delivery.
     timeoutMs: parseInt(process.env.WEBHOOK_TIMEOUT_MS ?? '5000', 10),
+    connectTimeoutMs: parseInt(
+      process.env.WEBHOOK_CONNECT_TIMEOUT_MS ??
+        process.env.WEBHOOK_TIMEOUT_MS ??
+        '3000',
+      10,
+    ),
+    readTimeoutMs: parseInt(
+      process.env.WEBHOOK_READ_TIMEOUT_MS ??
+        process.env.WEBHOOK_TIMEOUT_MS ??
+        '5000',
+      10,
+    ),
+    maxResponseBytes: parseInt(
+      process.env.WEBHOOK_MAX_RESPONSE_BYTES ?? '65536',
+      10,
+    ),
     maxAttempts: parseInt(process.env.WEBHOOK_MAX_ATTEMPTS ?? '3', 10),
     backoffMs: parseInt(process.env.WEBHOOK_BACKOFF_MS ?? '2000', 10),
     signatureHeader: (
