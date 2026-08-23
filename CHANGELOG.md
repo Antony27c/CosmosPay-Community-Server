@@ -2,6 +2,17 @@
 
 All notable changes to the Cosmos Pay Community Server are documented here.
 Generated from [Conventional Commits](https://www.conventionalcommits.org) by [git-cliff](https://git-cliff.org).
+## [0.0.6] - 2026-08-23
+
+### Bug Fixes
+- Validate redirect_url against per-consumer whitelist (4b6cfd3)
+- Emit one terminal event when observer and submit race (95c26ed)
+- Include settlement epoch in terminal event dedup key (0e0bcfc)
+
+### Miscellaneous
+- Sync redirect_url descriptions after KYC whitelist DTOs (e455b33)
+- Regenerate OpenAPI specs (7d85c44)
+
 ## [0.0.5] - 2026-08-23
 
 ### Miscellaneous
