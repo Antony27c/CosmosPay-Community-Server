@@ -18,7 +18,6 @@ import { AppConfig, StellarNetwork } from '../config/configuration';
 import { GatewayConsumer } from '../common/interfaces/gateway-consumer.interface';
 import {
   isUniqueViolation,
-  uniqueViolationTarget,
 } from '../common/prisma-errors';
 import { PrismaService } from '../prisma/prisma.service';
 import { StellarService } from '../stellar/stellar.service';
@@ -293,12 +292,10 @@ export class SwapsService {
       return await this.prisma.swap.create({ data });
     } catch (err) {
       if (!isUniqueViolation(err)) throw err;
-      const target = uniqueViolationTarget(err);
-      const isIdempotencyRace =
-        target.some((t) => t.includes('idempotencyKey')) ||
-        (Boolean(data.idempotencyKey) &&
-          !target.some((t) => t.includes('txHash')));
-      if (isIdempotencyRace) return null;
+      // With a key, always let the caller recover the existing row: a same-key
+      // race can trip the (network, txHash) index instead of the key index
+      // (Postgres reports only one of the two violations arbitrarily).
+      if (data.idempotencyKey) return null;
       throw new ConflictException(
         'A swap with this transaction hash already exists for this network. ' +
           'Two creates rebuilt the same Stellar sequence/XDR — use an ' +

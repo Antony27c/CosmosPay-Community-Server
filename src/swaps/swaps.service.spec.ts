@@ -477,6 +477,34 @@ describe('SwapsService.create idempotency (issue #17)', () => {
     expect(result.txHash).toBe(existing.txHash);
   });
 
+  it('recovers via Idempotency-Key even when Postgres reports the txHash target', async () => {
+    // Same-key concurrent creates rebuild the same XDR → both unique indexes
+    // can fire; Postgres may report only (network, txHash). Must still return
+    // the existing swap, not 409.
+    const existing = swapRow({
+      id: 'swap_winner',
+      idempotencyKey: 'same-key',
+      txHash: 'ef'.repeat(32),
+    });
+    let idempotencyLookups = 0;
+    prisma.swap.findUnique.mockImplementation(async ({ where }: any) => {
+      if (where.consumerId_idempotencyKey) {
+        idempotencyLookups += 1;
+        return idempotencyLookups === 1 ? null : { ...existing };
+      }
+      return null;
+    });
+    prisma.swap.create.mockRejectedValue({
+      code: 'P2002',
+      meta: { target: ['network', 'txHash'] },
+    });
+
+    const result = await service.create(consumer, createDto, 'same-key');
+
+    expect(result.id).toBe('swap_winner');
+    expect(result.txHash).toBe(existing.txHash);
+  });
+
   it('maps a (network, txHash) unique violation to a clear ConflictException', async () => {
     await service.create(consumer, createDto);
     expect(prisma.rows).toHaveLength(1);

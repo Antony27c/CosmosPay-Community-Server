@@ -2,10 +2,10 @@ import {
   Body,
   Controller,
   Get,
-  Headers,
   Param,
   Post,
   Query,
+  Req,
 } from '@nestjs/common';
 import {
   ApiCreatedResponse,
@@ -14,6 +14,7 @@ import {
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import type { Request } from 'express';
 import { CurrentConsumer } from '../common/decorators/current-consumer.decorator';
 import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
 import { GatewayConsumer } from '../common/interfaces/gateway-consumer.interface';
@@ -67,9 +68,15 @@ export class SwapsController {
   create(
     @CurrentConsumer() consumer: GatewayConsumer,
     @Body() dto: CreateSwapDto,
-    @Headers('idempotency-key') idempotencyKey?: string,
+    // Read via @Req (not @Headers) so Swagger does not auto-emit a second
+    // required `idempotency-key` parameter alongside @ApiHeader.
+    @Req() req: Request,
   ) {
-    return this.swaps.create(consumer, dto, idempotencyKey);
+    return this.swaps.create(
+      consumer,
+      dto,
+      headerValue(req, 'idempotency-key'),
+    );
   }
 
   @Get()
@@ -108,4 +115,10 @@ export class SwapsController {
   ) {
     return this.swaps.submit(consumer, id, dto.signedXdr);
   }
+}
+
+function headerValue(req: Request, name: string): string | undefined {
+  const raw = req.headers[name];
+  if (Array.isArray(raw)) return raw[0];
+  return raw;
 }
