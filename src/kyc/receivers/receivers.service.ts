@@ -381,7 +381,13 @@ export class ReceiversService {
       };
       const mergedDto = merged as unknown as CreateReceiverDto;
       let kycStatus = row.kycStatus;
-      if (hasKycData(mergedDto) && row.kycStatus === 'inactive') {
+      // Any edit after our review gate must re-enter pending_review — otherwise a
+      // kyc:write caller could mutate tax_id/docs post-approve and enable() would
+      // POST never-reviewed data to BlindPay.
+      if (row.kycStatus === 'pending_user' && Object.keys(patch).length > 0) {
+        assertTransition(row.kycStatus, 'pending_review');
+        kycStatus = 'pending_review';
+      } else if (hasKycData(mergedDto) && row.kycStatus === 'inactive') {
         assertTransition(row.kycStatus, 'pending_review');
         kycStatus = 'pending_review';
       }

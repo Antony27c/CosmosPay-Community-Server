@@ -108,16 +108,16 @@ describe('receiver-state assertTransition', () => {
     }
   });
 
-  it('rejects pending_user → pending_review with 409', () => {
-    expect(() => assertTransition('pending_user', 'pending_review')).toThrow(
+  it('allows pending_user → pending_review (re-review after post-approve edit)', () => {
+    expect(() =>
+      assertTransition('pending_user', 'pending_review'),
+    ).not.toThrow();
+  });
+
+  it('rejects pending_user → inactive with 409', () => {
+    expect(() => assertTransition('pending_user', 'inactive')).toThrow(
       ConflictException,
     );
-    try {
-      assertTransition('pending_user', 'pending_review');
-    } catch (err) {
-      expect((err as ConflictException).message).toContain('pending_user');
-      expect((err as ConflictException).message).toContain('pending_review');
-    }
   });
 });
 
@@ -208,8 +208,10 @@ describe('ReceiversService.update — local branch', () => {
     });
     prisma.blindpayReceiver.findFirst.mockResolvedValue(row);
     let savedRaw: Record<string, unknown> | undefined;
+    let savedStatus: string | null | undefined;
     prisma.blindpayReceiver.update.mockImplementation(async ({ data }: any) => {
       savedRaw = data.raw as Record<string, unknown>;
+      savedStatus = data.kycStatus;
       return { ...row, ...data };
     });
 
@@ -220,6 +222,40 @@ describe('ReceiversService.update — local branch', () => {
 
     expect(savedRaw).not.toHaveProperty('tos_id');
     expect(savedRaw?.tax_id).toBe('111');
+    // Post-approve KYC edit must re-enter the review gate.
+    expect(savedStatus).toBe('pending_review');
+  });
+
+  it('demotes pending_user → pending_review when local KYC data is edited', async () => {
+    const { service, prisma, blindpay } = makeService();
+    const row = baseRow({
+      kycStatus: 'pending_user',
+      raw: {
+        type: 'individual',
+        country: 'US',
+        email: 'jane@acme.com',
+        tax_id: '123-45-6789',
+      },
+    });
+    prisma.blindpayReceiver.findFirst.mockResolvedValue(row);
+    prisma.blindpayReceiver.update.mockImplementation(
+      async ({ data }: any) => ({ ...row, ...data }),
+    );
+
+    const result = await service.update(CONSUMER, row.id, {
+      tax_id: '999-99-9999',
+    } as any);
+
+    expect(blindpay.put).not.toHaveBeenCalled();
+    expect(result.kycStatus).toBe('pending_review');
+    expect(prisma.blindpayReceiver.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          kycStatus: 'pending_review',
+          raw: expect.objectContaining({ tax_id: '999-99-9999' }),
+        }),
+      }),
+    );
   });
 });
 

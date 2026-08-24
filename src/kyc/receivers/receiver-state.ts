@@ -26,13 +26,14 @@ export type KycState = OwnKycState | BlindpayKycState;
  *
  *   inactive       → pending_review  (KYC data uploaded via local update)
  *   pending_review → pending_user    (owner/admin approve)
+ *   pending_user   → pending_review  (local KYC edit after approval → re-review)
  *   pending_user   → verifying|…     (enable() creates the BlindPay receiver)
  *   verifying      → approved|rejected (BlindPay-owned; listed for completeness)
  */
 export const ALLOWED_TRANSITIONS: Record<KycState, readonly KycState[]> = {
   inactive: ['pending_review'],
   pending_review: ['pending_user'],
-  pending_user: ['verifying', 'approved', 'rejected'],
+  pending_user: ['pending_review', 'verifying', 'approved', 'rejected'],
   verifying: ['approved', 'rejected'],
   approved: [],
   rejected: [],
