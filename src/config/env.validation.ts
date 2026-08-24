@@ -221,6 +221,7 @@ class EnvironmentVariables {
   @Min(1)
   BLINDPAY_TIMEOUT_MS?: number;
 
+
   /**
    * Platform-admin credentials JSON (issue #34). Optional at boot — empty means
    * admin routes fail closed. Shape:
@@ -266,7 +267,7 @@ function effectiveMaxSlippageBps(validated: EnvironmentVariables): number {
   return (
     validated.STELLAR_SWAP_MAX_SLIPPAGE_BPS ?? DEFAULT_SWAP_MAX_SLIPPAGE_BPS
   );
-}
+
 
 export function validateEnv(config: Record<string, unknown>) {
   const legacyHorizonUrl = config.STELLAR_HORIZON_URL;

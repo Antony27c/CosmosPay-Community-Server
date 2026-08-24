@@ -24,6 +24,7 @@ import { BlindpayModule } from './blindpay/blindpay.module';
 import { KycModule } from './kyc/kyc.module';
 import { OnrampModule } from './onramp/onramp.module';
 import { OfframpModule } from './offramp/offramp.module';
+import { CommonModule } from './common/common.module';
 
 @Module({
   imports: [
@@ -44,6 +45,8 @@ import { OfframpModule } from './offramp/offramp.module';
     // Background reconciler: flips swaps/LP ops to SUCCEEDED/FAILED/EXPIRED by
     // checking their txHash on Horizon, even when the customer self-broadcasts.
     ObserverModule,
+    // Request-log retention prune (bounded deleteMany on a timer).
+    CommonModule,
     WebhooksModule,
     AnalyticsModule,
     AdminModule,

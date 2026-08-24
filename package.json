@@ -29,6 +29,7 @@
     "openapi:generate": "ts-node --transpile-only scripts/generate-openapi.ts",
     "openapi:check": "npm run openapi:generate && git diff --exit-code -- openapi/openapi.json openapi/openapi.yaml",
     "webhooks:audit-destinations": "ts-node --transpile-only scripts/mark-blocked-webhook-endpoints.ts"
+    "seed:request-logs": "ts-node --transpile-only scripts/seed-request-logs.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.2.1",

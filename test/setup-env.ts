@@ -13,3 +13,5 @@ process.env.ADMIN_API_CREDENTIALS = JSON.stringify([
   { id: 'viewer', secret: 'read-secret-000000', role: 'read' },
   { id: 'owner', secret: 'write-secret-00000', role: 'write' },
 ]);
+// Keep request-log prune off during tests (no background deleteMany).
+process.env.REQUEST_LOG_RETENTION_DAYS = '0';

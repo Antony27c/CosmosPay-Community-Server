@@ -79,7 +79,10 @@ model RequestLog {
 
   createdAt   DateTime @default(now())
 
-  @@index([consumer])
+  // Composite covers the dashboard query (filter consumer + order createdAt desc).
+  // The former single-column consumer index is a redundant prefix of this one.
+  @@index([consumer, createdAt])
+  // Used by the retention prune (delete where createdAt < cutoff).
   @@index([createdAt])
   @@map("request_log")
 }
