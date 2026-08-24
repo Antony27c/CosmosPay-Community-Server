@@ -267,7 +267,7 @@ function effectiveMaxSlippageBps(validated: EnvironmentVariables): number {
   return (
     validated.STELLAR_SWAP_MAX_SLIPPAGE_BPS ?? DEFAULT_SWAP_MAX_SLIPPAGE_BPS
   );
-
+}
 
 export function validateEnv(config: Record<string, unknown>) {
   const legacyHorizonUrl = config.STELLAR_HORIZON_URL;
