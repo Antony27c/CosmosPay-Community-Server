@@ -6,6 +6,7 @@ describe('RequestLogRetentionService', () => {
     retentionDays: 30,
     pruneIntervalMs: 3600000,
     batchSize: 2,
+    maxPerCycle: 6,
   };
 
   function build(cfg = retentionCfg) {
@@ -33,6 +34,7 @@ describe('RequestLogRetentionService', () => {
       retentionDays: 0,
       pruneIntervalMs: 3600000,
       batchSize: 1000,
+      maxPerCycle: 50000,
     });
     service.onModuleInit();
 
@@ -62,27 +64,45 @@ describe('RequestLogRetentionService', () => {
     service.onModuleDestroy();
   });
 
-  it('deletes at most batchSize stale rows and logs the count', async () => {
+  it('loops batches until a short page, then logs the total deleted', async () => {
     const loggerLog = jest.spyOn(Logger.prototype, 'log').mockImplementation();
 
-    const stale = [{ id: 'a' }, { id: 'b' }];
     const { service, prisma } = build();
-    prisma.requestLog.findMany.mockResolvedValue(stale);
+    prisma.requestLog.findMany
+      .mockResolvedValueOnce([{ id: 'a' }, { id: 'b' }])
+      .mockResolvedValueOnce([{ id: 'c' }]); // short page → stop
+    prisma.requestLog.deleteMany
+      .mockResolvedValueOnce({ count: 2 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    await (service as any).tick();
+
+    expect(prisma.requestLog.findMany).toHaveBeenCalledTimes(2);
+    expect(prisma.requestLog.deleteMany).toHaveBeenCalledTimes(2);
+    expect(prisma.requestLog.deleteMany).toHaveBeenNthCalledWith(1, {
+      where: { id: { in: ['a', 'b'] } },
+    });
+    expect(prisma.requestLog.deleteMany).toHaveBeenNthCalledWith(2, {
+      where: { id: { in: ['c'] } },
+    });
+    expect(loggerLog).toHaveBeenCalledWith(
+      expect.stringMatching(/Request log prune deleted 3 row/),
+    );
+  });
+
+  it('stops at maxPerCycle even when more stale rows remain', async () => {
+    const loggerLog = jest.spyOn(Logger.prototype, 'log').mockImplementation();
+    const { service, prisma } = build(); // maxPerCycle=6, batchSize=2 → 3 batches
+
+    prisma.requestLog.findMany.mockResolvedValue([{ id: 'x' }, { id: 'y' }]);
     prisma.requestLog.deleteMany.mockResolvedValue({ count: 2 });
 
     await (service as any).tick();
 
-    expect(prisma.requestLog.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        take: 2,
-        where: { createdAt: { lt: expect.any(Date) } },
-      }),
-    );
-    expect(prisma.requestLog.deleteMany).toHaveBeenCalledWith({
-      where: { id: { in: ['a', 'b'] } },
-    });
+    expect(prisma.requestLog.findMany).toHaveBeenCalledTimes(3);
+    expect(prisma.requestLog.deleteMany).toHaveBeenCalledTimes(3);
     expect(loggerLog).toHaveBeenCalledWith(
-      expect.stringMatching(/Request log prune deleted 2 row/),
+      expect.stringMatching(/Request log prune deleted 6 row/),
     );
   });
 

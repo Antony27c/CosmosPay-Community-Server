@@ -132,10 +132,13 @@ status, duration, and — when present — the payer's `ip` / `userAgent`.
 
 Those rows are **not kept forever**. `RequestLogRetentionService` deletes rows
 older than `REQUEST_LOG_RETENTION_DAYS` (default **30**) on a timer
-(`REQUEST_LOG_PRUNE_INTERVAL_MS`, default **1h**), in bounded batches so a prune
-cycle never holds a long lock on the table. Set `REQUEST_LOG_RETENTION_DAYS=0`
-to disable the prune entirely (the service logs that at boot). The composite
-index on `(consumer, createdAt)` keeps the dashboard query fast as volume grows.
+(`REQUEST_LOG_PRUNE_INTERVAL_MS`, default **1h**). Each cycle deletes in short
+`REQUEST_LOG_PRUNE_BATCH_SIZE` chunks (default **1000**) and keeps looping until
+the backlog is gone or `REQUEST_LOG_PRUNE_MAX_PER_CYCLE` (default **50000**) is
+hit, so a large history can catch up without holding one long table lock. Set
+`REQUEST_LOG_RETENTION_DAYS=0` to disable the prune entirely (the service logs
+that at boot). The composite index on `(consumer, createdAt)` keeps the
+dashboard query fast as volume grows.
 
 ### Webhooks (notifying integrators)
 

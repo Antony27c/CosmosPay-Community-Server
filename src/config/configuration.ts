@@ -53,8 +53,10 @@ export interface AppConfig {
     retentionDays: number;
     // How often the prune cycle runs.
     pruneIntervalMs: number;
-    // Max rows deleted per cycle (bounded batches to avoid long table locks).
+    // Rows deleted per deleteMany (keeps each lock short).
     batchSize: number;
+    // Hard cap on total rows deleted in one tick (catch-up without unbounded work).
+    maxPerCycle: number;
   };
   paymentIntents: {
     // Lifetime of a payment intent; unpaid intents past this are marked EXPIRED.
@@ -154,8 +156,13 @@ export default (): AppConfig => ({
       process.env.REQUEST_LOG_PRUNE_INTERVAL_MS ?? '3600000',
       10,
     ),
-    // Hard cap per cycle; not env-tunable — keeps locks short on a hot table.
-    batchSize: 1000,
+    // Each deleteMany is capped so locks stay short; the tick loops until the
+    // backlog is drained or maxPerCycle is hit (catches up after long outages).
+    batchSize: parseInt(process.env.REQUEST_LOG_PRUNE_BATCH_SIZE ?? '1000', 10),
+    maxPerCycle: parseInt(
+      process.env.REQUEST_LOG_PRUNE_MAX_PER_CYCLE ?? '50000',
+      10,
+    ),
   },
   paymentIntents: {
     ttlSeconds: parseInt(process.env.PAYMENT_INTENT_TTL_SECONDS ?? '3600', 10),

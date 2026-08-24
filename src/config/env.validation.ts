@@ -132,6 +132,16 @@ class EnvironmentVariables {
   @IsInt()
   @Min(1)
   REQUEST_LOG_PRUNE_INTERVAL_MS?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  REQUEST_LOG_PRUNE_BATCH_SIZE?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  REQUEST_LOG_PRUNE_MAX_PER_CYCLE?: number;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

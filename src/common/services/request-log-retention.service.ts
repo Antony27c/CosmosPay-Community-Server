@@ -15,6 +15,10 @@ import { PrismaService } from '../../prisma/prisma.service';
  *
  * Mirrors SettlementObserverService: fixed interval, no overlapping cycles,
  * `unref` so the timer never keeps the process alive, clearInterval on destroy.
+ *
+ * Each tick drains in short `batchSize` deleteMany calls (short locks) and
+ * loops until the backlog is empty or `maxPerCycle` is hit, so a large history
+ * can catch up without waiting one batch per hour.
  */
 @Injectable()
 export class RequestLogRetentionService
@@ -55,7 +59,7 @@ export class RequestLogRetentionService
     if (this.running) return;
     this.running = true;
     try {
-      const { retentionDays, batchSize } = this.config.get(
+      const { retentionDays, batchSize, maxPerCycle } = this.config.get(
         'requestLogRetention',
         { infer: true },
       );
@@ -64,21 +68,37 @@ export class RequestLogRetentionService
       const cutoff = new Date(
         Date.now() - retentionDays * 24 * 60 * 60 * 1000,
       );
-      // deleteMany has no take — select a bounded id set first, then delete.
-      const stale = await this.prisma.requestLog.findMany({
-        where: { createdAt: { lt: cutoff } },
-        select: { id: true },
-        orderBy: { createdAt: 'asc' },
-        take: batchSize,
-      });
-      if (stale.length === 0) return;
+      const take = Math.max(1, batchSize);
+      const cap = Math.max(take, maxPerCycle);
+      let deleted = 0;
 
-      const result = await this.prisma.requestLog.deleteMany({
-        where: { id: { in: stale.map((r) => r.id) } },
-      });
-      this.logger.log(
-        `Request log prune deleted ${result.count} row(s) older than ${cutoff.toISOString()}`,
-      );
+      // Loop bounded deletes until drained or the per-cycle cap is hit.
+      while (deleted < cap) {
+        const remaining = cap - deleted;
+        const takeNow = Math.min(take, remaining);
+        // deleteMany has no take — select a bounded id set first, then delete.
+        const stale = await this.prisma.requestLog.findMany({
+          where: { createdAt: { lt: cutoff } },
+          select: { id: true },
+          orderBy: { createdAt: 'asc' },
+          take: takeNow,
+        });
+        if (stale.length === 0) break;
+
+        const result = await this.prisma.requestLog.deleteMany({
+          where: { id: { in: stale.map((r) => r.id) } },
+        });
+        deleted += result.count;
+
+        // Short batch ⇒ nothing (or almost nothing) left past the cutoff.
+        if (stale.length < takeNow) break;
+      }
+
+      if (deleted > 0) {
+        this.logger.log(
+          `Request log prune deleted ${deleted} row(s) older than ${cutoff.toISOString()}`,
+        );
+      }
     } catch (err) {
       this.logger.error('Request log retention cycle failed', err as Error);
     } finally {
