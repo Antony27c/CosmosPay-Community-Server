@@ -2,6 +2,11 @@
 
 All notable changes to the Cosmos Pay Community Server are documented here.
 Generated from [Conventional Commits](https://www.conventionalcommits.org) by [git-cliff](https://git-cliff.org).
+## [0.0.9] - 2026-08-24
+
+### Bug Fixes
+- La coma que falta en package.json deja main inconstruible (#53) (7d65e48)
+
 ## [0.0.8] - 2026-08-24
 
 ### Bug Fixes
