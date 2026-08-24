@@ -320,7 +320,16 @@ paths:
   /v1/swaps:
     post:
       operationId: SwapsController_create_v1
-      parameters: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          description: Optional idempotency key. Retries with the same key return the
+            existing swap (same id and txHash). Takes precedence over
+            body.idempotencyKey.
+          required: false
+          schema:
+            type: string
+            example: swap-retry-2026-08-23-001
       requestBody:
         required: true
         content:
@@ -972,8 +981,11 @@ paths:
             schema:
               $ref: "#/components/schemas/ApproveReceiverDto"
       responses:
-        "201":
-          description: ""
+        "200":
+          description: Receiver approved; terms link returned
+        "409":
+          description: Invalid KYC status transition (e.g. receiver is not in
+            'pending_review')
       summary: Approve a pending-review receiver (owner/admin review gate); sends the
         customer the terms link and returns it
       tags: *a10
@@ -1030,6 +1042,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ReceiverEntity"
+        "409":
+          description: Invalid KYC status transition (e.g. receiver is not in
+            'pending_user')
       summary: Enable an inactive receiver with an accepted terms-of-service id
       tags: *a10
   /v1/kyc/receivers/{id}/access:
@@ -2399,6 +2414,13 @@ components:
           type: string
           description: Optional MEMO_ID (numeric uint64) echoed on-chain for reconciliation.
           example: "123456789"
+        idempotencyKey:
+          type: string
+          description: Optional idempotency key. Prefer the `Idempotency-Key` request
+            header; when both are set, the header wins. Retries with the same
+            key return the existing swap instead of building another
+            transaction.
+          example: swap-retry-2026-08-23-001
       required:
         - amount
         - destAssetCode
@@ -2472,6 +2494,12 @@ components:
           type: object
           nullable: true
           example: null
+        idempotencyKey:
+          type: object
+          nullable: true
+          example: swap-retry-2026-08-23-001
+          description: Client idempotency key when supplied via Idempotency-Key / body
+            (null otherwise).
         commissionMemo:
           type: object
           nullable: true
@@ -4317,7 +4345,9 @@ components:
           example: false
           description: When true, the sender absorbs the fees.
         payer_rules:
-          description: Required for Transfers (AR) and PSE (CO) payins.
+          description: "Required for Transfers (AR): transfers_allowed_tax_id. Required
+            for PSE (CO): pse_full_name, pse_document_type, pse_document_number,
+            pse_email, pse_bank_code. Optional for other methods (e.g. pix)."
           allOf:
             - $ref: "#/components/schemas/PayerRulesDto"
         is_otc:
@@ -4529,6 +4559,7 @@ components:
         sender_wallet_address:
           type: string
           example: GCALNQQBXAPZ2WIRSDDBMSTAKCUH5SG6U76YBFLQLIXJTF7FE5AX7AOO
+          description: Sender wallet on the selected chain (Stellar G… or Solana base58).
         chain:
           type: string
           enum:
@@ -4547,7 +4578,9 @@ components:
           example: qe_000000000000
         sender_wallet_address:
           type: string
-          example: GCALNQQBXAPZ2WIRSDDBMSTAKCUH5SG6U76YBFLQLIXJTF7FE5AX7AOO
+          example: "0x1234567890123456789012345678901234567890"
+          description: Sender wallet on the selected chain (EVM 0x…, Stellar G…, or Solana
+            base58).
         chain:
           type: string
           enum:
@@ -4557,7 +4590,9 @@ components:
           example: evm
         signed_transaction:
           type: string
-          description: Signed transaction (Stellar XDR / Solana tx) from the authorize step.
+          description: "Required for stellar/solana: signed transaction (Stellar XDR /
+            Solana tx) from POST /v1/offramp/payouts/authorize. Not used for
+            evm."
       required:
         - quote_id
         - sender_wallet_address

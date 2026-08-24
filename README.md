@@ -123,6 +123,23 @@ Two paths use that single rule:
   statuses change and events fire **without anyone calling the API**. Disable for
   local dev with `OBSERVER_ENABLED=false`.
 
+### API request logs retention
+
+Every inbound request (except `/v1/health`, `/docs`, and traffic marked
+`x-cosmos-internal`) is appended to `request_log` by `LoggingInterceptor`, and
+powers the dashboard **API logs** view (`GET /v1/logs`). Rows include path,
+status, duration, and — when present — the payer's `ip` / `userAgent`.
+
+Those rows are **not kept forever**. `RequestLogRetentionService` deletes rows
+older than `REQUEST_LOG_RETENTION_DAYS` (default **30**) on a timer
+(`REQUEST_LOG_PRUNE_INTERVAL_MS`, default **1h**). Each cycle deletes in short
+`REQUEST_LOG_PRUNE_BATCH_SIZE` chunks (default **1000**) and keeps looping until
+the backlog is gone or `REQUEST_LOG_PRUNE_MAX_PER_CYCLE` (default **50000**) is
+hit, so a large history can catch up without holding one long table lock. Set
+`REQUEST_LOG_RETENTION_DAYS=0` to disable the prune entirely (the service logs
+that at boot). The composite index on `(consumer, createdAt)` keeps the
+dashboard query fast as volume grows.
+
 ### Webhooks (notifying integrators)
 
 Each integrator (APISIX consumer) registers one or more webhook endpoints. When a
@@ -385,6 +402,15 @@ otherwise. (XLM needs no trustline.)
 same fields plus `source` (the paying/signing account); `destination` defaults to
 `source` (a self-swap) and an optional `memo` (MEMO_ID) is echoed on-chain.
 
+Optional **idempotency** (issue #17): send an `Idempotency-Key` header (preferred)
+or `idempotencyKey` in the body. Retries with the same key for the same consumer
+return the **existing** swap (`id` + `txHash`) instead of building another Stellar
+transaction. Without a key, the unique `(network, txHash)` constraint still rejects
+a byte-identical rebuild with **409** (sequence / XDR collision). When
+`STELLAR_SWAP_SINGLE_INFLIGHT=true`, a second non-expired `PENDING` swap for the
+same `(consumer, source, network)` also returns **409** naming the existing id
+(default **off** — concurrent distinct swaps from one account remain allowed).
+
 ```jsonc
 // response → { id, status: "PENDING", network, sendAmount, feeAmount, swapAmount,
 //              destEstimated, destMin, path, xdr, uri: "web+stellar:tx?xdr=…", qr, txHash, … }
@@ -481,6 +507,7 @@ at least `DATABASE_URL` and `APISIX_GATEWAY_SECRET`.
 | `STELLAR_SWAP_FEE_BPS` | no | `50` | Swap fee in basis points |
 | `STELLAR_SWAP_SLIPPAGE_BPS` | no | `50` | Default swap slippage tolerance (bps) |
 | `STELLAR_SWAP_MAX_SLIPPAGE_BPS` | no | `500` | Hard cap on caller slippage (bps) |
+| `STELLAR_SWAP_SINGLE_INFLIGHT` | no | `false` | When `true`, 409 if a non-expired PENDING swap already exists for the same source |
 | `OBSERVER_ENABLED` | no | `true` | `true` / `false` — on-chain reconciler |
 | `OBSERVER_INTERVAL_MS` | no | `15000` | Observer poll interval (ms, min 1000) |
 | `OBSERVER_BATCH_SIZE` | no | `50` | Max intents/swaps per observer tick |

@@ -144,6 +144,11 @@ class EnvironmentVariables {
   @Max(10000)
   STELLAR_SWAP_MAX_SLIPPAGE_BPS?: number;
 
+  /** When "true", at most one non-expired PENDING swap per (consumer, source, network). */
+  @IsOptional()
+  @IsBooleanString()
+  STELLAR_SWAP_SINGLE_INFLIGHT?: string;
+
   // --- On-chain observer + payment intent lifetime ---
   @IsOptional()
   @IsBooleanString()
@@ -231,6 +236,7 @@ class EnvironmentVariables {
   @IsInt()
   @Min(1)
   BLINDPAY_TIMEOUT_MS?: number;
+
 
   /**
    * Platform-admin credentials JSON (issue #34). Optional at boot — empty means

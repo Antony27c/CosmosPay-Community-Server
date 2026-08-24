@@ -126,28 +126,78 @@ export class SettlementObserverService
     });
     const now = new Date();
     let reconciled = 0;
+
+    // One Horizon lookup per txHash. Historical duplicate hashes (pre-migration)
+    // must not mint multiple SWAP_SUCCEEDED / SWAP_FAILED for one on-chain tx.
+    const byHash = new Map<string, typeof rows>();
     for (const row of rows) {
-      const settlement = await this.settlementOf(row.network, row.txHash);
-      const username = row.consumer.apisixUsername;
+      const group = byHash.get(row.txHash) ?? [];
+      group.push(row);
+      byHash.set(row.txHash, group);
+    }
+
+    for (const [, group] of byHash) {
+      const primary = group[0];
+      const settlement = await this.settlementOf(
+        primary.network,
+        primary.txHash,
+      );
+
       if (settlement === 'succeeded') {
-        const { applied } = await this.swaps.finalizeSucceeded(
-          row.id,
-          username,
-        );
-        if (applied) {
-          reconciled += 1;
-          this.logger.log(`Reconciled swap ${row.id} → SUCCEEDED`);
+        for (let i = 0; i < group.length; i++) {
+          const row = group[i];
+          const username = row.consumer.apisixUsername;
+          if (i === 0) {
+            const { applied } = await this.swaps.finalizeSucceeded(
+              row.id,
+              username,
+            );
+            if (applied) {
+              reconciled += 1;
+              this.logger.log(`Reconciled swap ${row.id} → SUCCEEDED`);
+            }
+          } else {
+            // Duplicate hash: settle the phantom row without a second webhook.
+            const { applied } = await this.swaps.finalizeSucceededQuiet(row.id);
+            if (applied) {
+              reconciled += 1;
+              this.logger.log(
+                `Reconciled duplicate-hash swap ${row.id} → SUCCEEDED (no webhook)`,
+              );
+            }
+          }
         }
       } else if (settlement === 'failed') {
-        const { applied } = await this.swaps.finalizeFailed(row.id, username);
-        if (applied) {
-          reconciled += 1;
-          this.logger.warn(`Reconciled swap ${row.id} → FAILED`);
+        for (let i = 0; i < group.length; i++) {
+          const row = group[i];
+          const username = row.consumer.apisixUsername;
+          if (i === 0) {
+            const { applied } = await this.swaps.finalizeFailed(
+              row.id,
+              username,
+            );
+            if (applied) {
+              reconciled += 1;
+              this.logger.warn(`Reconciled swap ${row.id} → FAILED`);
+            }
+          } else {
+            const { applied } = await this.swaps.finalizeFailedQuiet(row.id);
+            if (applied) {
+              reconciled += 1;
+              this.logger.warn(
+                `Reconciled duplicate-hash swap ${row.id} → FAILED (no webhook)`,
+              );
+            }
+          }
         }
-      } else if (row.expiresAt && row.expiresAt < now) {
-        const { applied } = await this.swaps.finalizeExpired(row.id);
-        if (applied) {
-          this.logger.log(`Expired swap ${row.id} (never settled)`);
+      } else {
+        for (const row of group) {
+          if (row.expiresAt && row.expiresAt < now) {
+            const { applied } = await this.swaps.finalizeExpired(row.id);
+            if (applied) {
+              this.logger.log(`Expired swap ${row.id} (never settled)`);
+            }
+          }
         }
       }
     }

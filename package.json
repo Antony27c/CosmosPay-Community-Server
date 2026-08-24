@@ -1,6 +1,6 @@
 {
   "name": "comos-pay-community-server",
-  "version": "0.0.7",
+  "version": "0.0.9",
   "description": "Cosmos Pay — payments microservice (NestJS + Prisma) behind the APISIX gateway",
   "author": "",
   "private": true,
@@ -28,7 +28,8 @@
     "db:studio": "prisma studio",
     "openapi:generate": "ts-node --transpile-only scripts/generate-openapi.ts",
     "openapi:check": "npm run openapi:generate && git diff --exit-code -- openapi/openapi.json openapi/openapi.yaml",
-    "webhooks:audit-destinations": "ts-node --transpile-only scripts/mark-blocked-webhook-endpoints.ts"
+    "webhooks:audit-destinations": "ts-node --transpile-only scripts/mark-blocked-webhook-endpoints.ts",
+    "seed:request-logs": "ts-node --transpile-only scripts/seed-request-logs.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.2.1",

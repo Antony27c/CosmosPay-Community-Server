@@ -2,6 +2,19 @@
 
 All notable changes to the Cosmos Pay Community Server are documented here.
 Generated from [Conventional Commits](https://www.conventionalcommits.org) by [git-cliff](https://git-cliff.org).
+## [0.0.9] - 2026-08-24
+
+### Bug Fixes
+- La coma que falta en package.json deja main inconstruible (#53) (7d65e48)
+
+## [0.0.8] - 2026-08-24
+
+### Bug Fixes
+- Add idempotency and unique txHash to prevent double SWAP_SUCCEEDED (4188907)
+- Recover same-key races and mark Idempotency-Key optional in OpenAPI (4778f27)
+- Unblock local receiver updates and KYC state transitions (91cb4f4)
+- Demote pending_user to pending_review on post-approve edits (8a7f5ae)
+
 ## [0.0.7] - 2026-08-23
 
 ### Bug Fixes

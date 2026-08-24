@@ -18,6 +18,7 @@ import { randomBytes } from 'node:crypto';
 import QRCode from 'qrcode';
 import { AppConfig, StellarNetwork } from '../config/configuration';
 import { GatewayConsumer } from '../common/interfaces/gateway-consumer.interface';
+import { isUniqueViolation } from '../common/prisma-errors';
 import { PrismaService } from '../prisma/prisma.service';
 import { horizonHttpStatus, StellarService } from '../stellar/stellar.service';
 import type {
@@ -188,11 +189,6 @@ export class PaymentIntentsService {
     });
   }
 
-  /** True for a Prisma unique-constraint violation. */
-  private isUniqueViolation(err: unknown): boolean {
-    return (err as { code?: string })?.code === 'P2002';
-  }
-
   /** Appends shared SEP-7 extras (`msg`, `callback`) to a URI's params. */
   private appendSep7Extras(
     params: URLSearchParams,
@@ -346,7 +342,7 @@ export class PaymentIntentsService {
     try {
       return await this.prisma.paymentIntent.create({ data: withTtl });
     } catch (err) {
-      if (this.isUniqueViolation(err)) return null;
+      if (isUniqueViolation(err)) return null;
       throw err;
     }
   }

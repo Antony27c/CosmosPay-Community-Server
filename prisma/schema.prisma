@@ -79,7 +79,10 @@ model RequestLog {
 
   createdAt   DateTime @default(now())
 
-  @@index([consumer])
+  // Composite covers the dashboard query (filter consumer + order createdAt desc).
+  // The former single-column consumer index is a redundant prefix of this one.
+  @@index([consumer, createdAt])
+  // Used by the retention prune (delete where createdAt < cutoff).
   @@index([createdAt])
   @@map("request_log")
 }
@@ -550,6 +553,11 @@ model Swap {
   // Optional MEMO_ID echoed on-chain for the merchant's own reconciliation.
   memo        String?
 
+  // Client-supplied idempotency key (Idempotency-Key header or DTO field).
+  // NULL when omitted — PostgreSQL treats NULLs as distinct, so multiple
+  // swaps without a key remain allowed for the same consumer.
+  idempotencyKey String?
+
   status      SwapStatus @default(PENDING)
   // Bumped only on FAILED → SUBMITTED (a real resubmit). Terminal webhook
   // dedup keys include this so a later SWAP_FAILED is not collapsed into the
@@ -568,7 +576,10 @@ model Swap {
 
   @@index([consumerId])
   @@index([status])
-  @@index([txHash])
+  // Idempotency: one swap per (consumer, key) when a key is supplied.
+  @@unique([consumerId, idempotencyKey])
+  // Prevents two PENDING rows sharing the same on-chain tx (sequence collision).
+  @@unique([network, txHash])
   @@map("swap")
 }
 

@@ -1,10 +1,20 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  Req,
+} from '@nestjs/common';
 import {
   ApiCreatedResponse,
+  ApiHeader,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import type { Request } from 'express';
 import { CurrentConsumer } from '../common/decorators/current-consumer.decorator';
 import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
 import { GatewayConsumer } from '../common/interfaces/gateway-consumer.interface';
@@ -46,12 +56,27 @@ export class SwapsController {
     summary:
       'Create a swap → unsigned XDR + SEP-7 tx URI + QR for the wallet to sign',
   })
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description:
+      'Optional idempotency key. Retries with the same key return the existing ' +
+      'swap (same id and txHash). Takes precedence over body.idempotencyKey.',
+    example: 'swap-retry-2026-08-23-001',
+  })
   @ApiCreatedResponse({ type: SwapEntity })
   create(
     @CurrentConsumer() consumer: GatewayConsumer,
     @Body() dto: CreateSwapDto,
+    // Read via @Req (not @Headers) so Swagger does not auto-emit a second
+    // required `idempotency-key` parameter alongside @ApiHeader.
+    @Req() req: Request,
   ) {
-    return this.swaps.create(consumer, dto);
+    return this.swaps.create(
+      consumer,
+      dto,
+      headerValue(req, 'idempotency-key'),
+    );
   }
 
   @Get()
@@ -90,4 +115,10 @@ export class SwapsController {
   ) {
     return this.swaps.submit(consumer, id, dto.signedXdr);
   }
+}
+
+function headerValue(req: Request, name: string): string | undefined {
+  const raw = req.headers[name];
+  if (Array.isArray(raw)) return raw[0];
+  return raw;
 }
