@@ -18,6 +18,7 @@ import {
   type CurrencyType,
   type PayinMethod,
 } from '../../blindpay/blindpay.constants';
+import { PayerRulesMatchPaymentMethod } from '../../common/validators/payer-rules-match-payment-method.validator';
 
 /**
  * Payer constraints / details some payin methods require. Argentina Transfers
@@ -82,6 +83,7 @@ export class PayerRulesDto {
  * minutes; create the payin from it before then. Amounts are integers in minor
  * units (e.g. $123.45 -> 12345).
  */
+@PayerRulesMatchPaymentMethod()
 export class CreatePayinQuoteDto {
   @ApiProperty({
     example: 'clz9xwallet001',
@@ -126,7 +128,8 @@ export class CreatePayinQuoteDto {
 
   @ApiPropertyOptional({
     type: PayerRulesDto,
-    description: 'Required for Transfers (AR) and PSE (CO) payins.',
+    description:
+      'Required for Transfers (AR): transfers_allowed_tax_id. Required for PSE (CO): pse_full_name, pse_document_type, pse_document_number, pse_email, pse_bank_code. Optional for other methods (e.g. pix).',
   })
   @IsOptional()
   @ValidateNested()
