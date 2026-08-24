@@ -253,10 +253,11 @@ export class SettlementObserverService
   }
 
   /**
-   * Re-checks EXPIRED rows from the last 24h against Horizon and corrects them
-   * if the tx actually landed. Domain finalize* uses conditional updates so a
-   * concurrent transition is not overwritten. Low frequency: at most once per
-   * RESCUE_INTERVAL_MS.
+   * Re-checks EXPIRED rows whose tx timebounds fell in the last 24h and
+   * corrects them if the tx actually landed. Domain finalize* uses conditional
+   * updates so a concurrent transition is not overwritten. Low frequency: at
+   * most once per RESCUE_INTERVAL_MS. The lookback is on expiresAt (immutable
+   * after create) so a failed Horizon check never refreshes the window.
    */
   private async maybeRescueExpired(batchSize: number): Promise<void> {
     if (Date.now() - this.lastRescueAt < RESCUE_INTERVAL_MS) return;
@@ -265,15 +266,17 @@ export class SettlementObserverService
   }
 
   private async rescueExpired(batchSize: number): Promise<void> {
+    // Anchor on expiresAt (not updatedAt): touching lastCheckedAt would bump
+    // @updatedAt and keep truly-dead EXPIRED rows inside the window forever.
     const since = new Date(Date.now() - RESCUE_LOOKBACK_MS);
     const swaps = await this.prisma.swap.findMany({
-      where: { status: 'EXPIRED', updatedAt: { gte: since } },
+      where: { status: 'EXPIRED', expiresAt: { gte: since } },
       include: { consumer: true },
       orderBy: { lastCheckedAt: { sort: 'asc', nulls: 'first' } },
       take: batchSize,
     });
     const ops = await this.prisma.liquidityPoolOperation.findMany({
-      where: { status: 'EXPIRED', updatedAt: { gte: since } },
+      where: { status: 'EXPIRED', expiresAt: { gte: since } },
       include: { consumer: true },
       orderBy: { lastCheckedAt: { sort: 'asc', nulls: 'first' } },
       take: batchSize,
@@ -297,9 +300,9 @@ export class SettlementObserverService
         if (applied) {
           this.logger.log(`Rescued swap ${row.id} EXPIRED → FAILED`);
         }
-      } else {
-        await this.touchSwapCheck(row.id, now, row.notFoundStreak);
       }
+      // not_found / unknown: leave the row alone so updatedAt (and the
+      // expiresAt window) stay put — truly expired hashes age out after 24h.
     }
     for (const row of ops) {
       const settlement = await this.settlementOf(row.network, row.txHash);
@@ -322,8 +325,6 @@ export class SettlementObserverService
         if (applied) {
           this.logger.log(`Rescued LP operation ${row.id} EXPIRED → FAILED`);
         }
-      } else {
-        await this.touchLpCheck(row.id, now, row.notFoundStreak);
       }
     }
   }

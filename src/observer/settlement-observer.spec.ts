@@ -66,7 +66,10 @@ function expiredAt(graceMs = observerCfg.expiryGraceMs): Date {
   return new Date(Date.now() - graceMs - 1_000);
 }
 
-function isExpiredWhere(where: { status?: unknown }): boolean {
+function isExpiredWhere(where: {
+  status?: unknown;
+  expiresAt?: unknown;
+}): boolean {
   return where.status === 'EXPIRED';
 }
 
@@ -394,7 +397,7 @@ describe('SettlementObserverService', () => {
       consumer,
     };
     prisma.swap.findMany.mockImplementation(
-      (args: { where: { status?: unknown } }) => {
+      (args: { where: { status?: unknown; expiresAt?: unknown } }) => {
         if (isExpiredWhere(args.where)) return Promise.resolve([expired]);
         return Promise.resolve([]);
       },
@@ -406,6 +409,14 @@ describe('SettlementObserverService', () => {
     expect(swaps.finalizeSucceeded).toHaveBeenCalledWith(
       'sw_expired',
       USERNAME,
+    );
+    expect(prisma.swap.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: 'EXPIRED',
+          expiresAt: expect.objectContaining({ gte: expect.any(Date) }),
+        }),
+      }),
     );
   });
 
@@ -429,7 +440,7 @@ describe('SettlementObserverService', () => {
       consumer,
     };
     prisma.liquidityPoolOperation.findMany.mockImplementation(
-      (args: { where: { status?: unknown } }) => {
+      (args: { where: { status?: unknown; expiresAt?: unknown } }) => {
         if (isExpiredWhere(args.where)) return Promise.resolve([expired]);
         return Promise.resolve([]);
       },
