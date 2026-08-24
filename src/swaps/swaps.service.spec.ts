@@ -1,3 +1,4 @@
+import { ConflictException } from '@nestjs/common';
 import { Account, Keypair, TransactionBuilder } from '@stellar/stellar-sdk';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { GatewayConsumer } from '../common/interfaces/gateway-consumer.interface';
@@ -16,6 +17,7 @@ jest.mock('qrcode', () => ({
 const TX_HASH = 'ab'.repeat(32);
 const SOURCE = Keypair.random().publicKey();
 const FEE_WALLET = Keypair.random().publicKey();
+const DEST_ISSUER = Keypair.random().publicKey();
 
 const consumer: GatewayConsumer = {
   username: 'cosmos_u1',
@@ -48,6 +50,8 @@ function matchesWhere(row: any, where: any): boolean {
   if (!where) return true;
   if (where.id && where.id !== row.id) return false;
   if (where.consumerId && where.consumerId !== row.consumerId) return false;
+  if (where.source && where.source !== row.source) return false;
+  if (where.network && where.network !== row.network) return false;
   if (where.status !== undefined) {
     if (typeof where.status === 'string') {
       if (row.status !== where.status) return false;
@@ -130,8 +134,51 @@ function createPrisma(seed: any[] = []) {
         return { ...row };
       }),
       findUnique: jest.fn(async ({ where }: any) => {
+        if (where.consumerId_idempotencyKey) {
+          const { consumerId, idempotencyKey } =
+            where.consumerId_idempotencyKey;
+          const row = rows.find(
+            (r) =>
+              r.consumerId === consumerId &&
+              r.idempotencyKey === idempotencyKey,
+          );
+          return row ? { ...row } : null;
+        }
         const row = rows.find((r) => r.id === where.id);
         return row ? { ...row } : null;
+      }),
+      create: jest.fn(async ({ data }: any) => {
+        if (data.idempotencyKey) {
+          const clash = rows.find(
+            (r) =>
+              r.consumerId === data.consumerId &&
+              r.idempotencyKey === data.idempotencyKey,
+          );
+          if (clash) {
+            const err: any = new Error('Unique constraint failed');
+            err.code = 'P2002';
+            err.meta = { target: ['consumerId', 'idempotencyKey'] };
+            throw err;
+          }
+        }
+        const hashClash = rows.find(
+          (r) => r.network === data.network && r.txHash === data.txHash,
+        );
+        if (hashClash) {
+          const err: any = new Error('Unique constraint failed');
+          err.code = 'P2002';
+          err.meta = { target: ['network', 'txHash'] };
+          throw err;
+        }
+        const row = {
+          id: `swap_${rows.length + 1}`,
+          settlementEpoch: 0,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          ...data,
+        };
+        rows.push(row);
+        return { ...row };
       }),
       update: jest.fn(async ({ where, data }: any) => {
         const row = rows.find((r) => r.id === where.id);
@@ -150,7 +197,7 @@ function createPrisma(seed: any[] = []) {
   return prisma;
 }
 
-function stellarConfig() {
+function stellarConfig(swapOverrides: Record<string, unknown> = {}) {
   return {
     network: 'testnet',
     baseFee: '100',
@@ -160,6 +207,8 @@ function stellarConfig() {
       feeBps: 50,
       slippageBps: 50,
       maxSlippageBps: 500,
+      singleInflight: false,
+      ...swapOverrides,
     },
     horizon: { public: 'https://h', testnet: 'https://h' },
   };
@@ -168,17 +217,39 @@ function stellarConfig() {
 function makeStellar() {
   const submitTransaction = jest.fn().mockResolvedValue({ hash: TX_HASH });
   const txCall = jest.fn().mockResolvedValue({ successful: true });
-  const account: any = new Account(SOURCE, '1');
-  account.balances = [{ asset_type: 'native', balance: '10000' }];
+  const balances = [
+    { asset_type: 'native', balance: '10000' },
+    {
+      asset_type: 'credit_alphanum4',
+      asset_code: 'USDC',
+      asset_issuer: DEST_ISSUER,
+      balance: '0',
+    },
+  ];
+  const strictSendPaths = jest.fn().mockReturnValue({
+    call: jest.fn().mockResolvedValue({
+      records: [{ destination_amount: '9.5', path: [] }],
+    }),
+  });
+  const loadAccount = jest.fn().mockImplementation(async () => {
+    // Fresh Account each call so sequence stays at Horizon's view (N), not N+k
+    // after a prior TransactionBuilder mutation — needed for txHash-collision tests.
+    const account: any = new Account(SOURCE, '1');
+    account.balances = balances;
+    return account;
+  });
   return {
     passphrase: jest.fn().mockReturnValue('Test SDF Network ; September 2015'),
     server: jest.fn().mockReturnValue({
       submitTransaction,
       transactions: () => ({ transaction: () => ({ call: txCall }) }),
-      loadAccount: jest.fn().mockResolvedValue(account),
+      loadAccount,
+      strictSendPaths,
     }),
     submitTransaction,
     txCall,
+    strictSendPaths,
+    loadAccount,
   };
 }
 
@@ -197,12 +268,13 @@ function swapRow(overrides: Record<string, unknown> = {}): any {
     feeBps: 0,
     swapAmount: '10',
     destAsset: 'USDC',
-    destAssetIssuer: Keypair.random().publicKey(),
+    destAssetIssuer: DEST_ISSUER,
     destEstimated: '9',
     destMin: '8.9',
     slippageBps: 50,
     path: [],
     memo: null,
+    idempotencyKey: null,
     xdr: 'AAAA',
     uri: 'web+stellar:tx?xdr=AAAA',
     txHash: TX_HASH,
@@ -331,5 +403,154 @@ describe('SwapsService.submit vs observer (issue #29 double terminal event)', ()
     expect(row.status).toBe('FAILED');
     expect(row.settlementEpoch).toBe(1);
     expect(terminalEmits(events, 'SWAP_FAILED')).toHaveLength(2);
+  });
+});
+
+const createDto = {
+  source: SOURCE,
+  amount: '10',
+  destAssetCode: 'USDC',
+  destAssetIssuer: DEST_ISSUER,
+};
+
+describe('SwapsService.create idempotency (issue #17)', () => {
+  let prisma: ReturnType<typeof createPrisma>;
+  let stellar: ReturnType<typeof makeStellar>;
+  let events: EventEmitter2;
+  let service: SwapsService;
+
+  beforeEach(() => {
+    prisma = createPrisma();
+    stellar = makeStellar();
+    events = { emit: jest.fn() } as any;
+    const config = {
+      get: (key?: string) =>
+        key === 'observer'
+          ? { enabled: false, intervalMs: 15_000, batchSize: 50 }
+          : stellarConfig(),
+    } as any;
+    const webhooks = new WebhookTerminalEmitter(prisma as any, events);
+    service = new SwapsService(config, prisma as any, webhooks, stellar as any);
+    jest.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('two create() calls with the same Idempotency-Key hit prisma.swap.create once and return the same id', async () => {
+    const first = await service.create(consumer, createDto, 'key-1');
+    const second = await service.create(consumer, createDto, 'key-1');
+
+    expect(prisma.swap.create).toHaveBeenCalledTimes(1);
+    expect(second.id).toBe(first.id);
+    expect(second.txHash).toBe(first.txHash);
+    expect(prisma.rows).toHaveLength(1);
+    // Only one SWAP_CREATED (second is a pure read).
+    expect(terminalEmits(events, 'SWAP_CREATED')).toHaveLength(1);
+  });
+
+  it('translates an idempotency-key P2002 into the existing row (no P2002 to the client)', async () => {
+    const existing = swapRow({
+      id: 'swap_existing',
+      idempotencyKey: 'race-key',
+      txHash: 'cd'.repeat(32),
+    });
+    let idempotencyLookups = 0;
+    prisma.swap.findUnique.mockImplementation(async ({ where }: any) => {
+      if (where.consumerId_idempotencyKey) {
+        idempotencyLookups += 1;
+        // First lookup misses (race window); after create fails, return winner.
+        return idempotencyLookups === 1 ? null : { ...existing };
+      }
+      const row = prisma.rows.find((r: any) => r.id === where.id);
+      return row ? { ...row } : null;
+    });
+    prisma.swap.create.mockRejectedValue({
+      code: 'P2002',
+      meta: { target: ['consumerId', 'idempotencyKey'] },
+    });
+
+    const result = await service.create(consumer, createDto, 'race-key');
+
+    expect(result.id).toBe('swap_existing');
+    expect(result.txHash).toBe(existing.txHash);
+  });
+
+  it('maps a (network, txHash) unique violation to a clear ConflictException', async () => {
+    await service.create(consumer, createDto);
+    expect(prisma.rows).toHaveLength(1);
+
+    // Same frozen clock + same quote → identical XDR/hash → unique (network, txHash).
+    await expect(service.create(consumer, createDto)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    await expect(service.create(consumer, createDto)).rejects.toThrow(
+      /transaction hash/i,
+    );
+    expect(prisma.rows).toHaveLength(1);
+  });
+
+  it('returns 409 when STELLAR_SWAP_SINGLE_INFLIGHT blocks a second PENDING source', async () => {
+    const config = {
+      get: (key?: string) =>
+        key === 'observer'
+          ? { enabled: false, intervalMs: 15_000, batchSize: 50 }
+          : stellarConfig({ singleInflight: true }),
+    } as any;
+    const webhooks = new WebhookTerminalEmitter(prisma as any, events);
+    service = new SwapsService(config, prisma as any, webhooks, stellar as any);
+
+    await service.create(consumer, createDto, 'a');
+    await expect(
+      service.create(consumer, createDto, 'b'),
+    ).rejects.toBeInstanceOf(ConflictException);
+    await expect(service.create(consumer, createDto, 'b')).rejects.toThrow(
+      /in-flight swap already exists/i,
+    );
+  });
+});
+
+describe('SettlementObserverService duplicate txHash (issue #17)', () => {
+  let prisma: ReturnType<typeof createPrisma>;
+  let stellar: ReturnType<typeof makeStellar>;
+  let events: EventEmitter2;
+  let service: SwapsService;
+  let observer: SettlementObserverService;
+
+  beforeEach(() => {
+    prisma = createPrisma();
+    stellar = makeStellar();
+    events = { emit: jest.fn() } as any;
+    const config = {
+      get: (key?: string) =>
+        key === 'observer'
+          ? { enabled: false, intervalMs: 15_000, batchSize: 50 }
+          : stellarConfig(),
+    } as any;
+    const webhooks = new WebhookTerminalEmitter(prisma as any, events);
+    service = new SwapsService(config, prisma as any, webhooks, stellar as any);
+    observer = new SettlementObserverService(
+      config,
+      prisma as any,
+      stellar as any,
+      {} as any,
+      service,
+    );
+  });
+
+  it('two PENDING swaps with the same txHash emit a single SWAP_SUCCEEDED', async () => {
+    const a = swapRow({ id: 'swap_a', status: 'PENDING', txHash: TX_HASH });
+    const b = swapRow({ id: 'swap_b', status: 'PENDING', txHash: TX_HASH });
+    prisma.rows.push(a, b);
+    stellar.txCall.mockResolvedValue({ successful: true });
+
+    await (observer as any).reconcileSwaps(50);
+
+    expect(a.status).toBe('SUCCEEDED');
+    expect(b.status).toBe('SUCCEEDED');
+    expect(terminalEmits(events, 'SWAP_SUCCEEDED')).toHaveLength(1);
+    // One Horizon lookup for the shared hash, not one per row.
+    expect(stellar.txCall).toHaveBeenCalledTimes(1);
   });
 });

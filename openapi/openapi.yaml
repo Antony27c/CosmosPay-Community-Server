@@ -320,7 +320,21 @@ paths:
   /v1/swaps:
     post:
       operationId: SwapsController_create_v1
-      parameters: []
+      parameters:
+        - name: idempotency-key
+          required: true
+          in: header
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          description: Optional idempotency key. Retries with the same key return the
+            existing swap (same id and txHash). Takes precedence over
+            body.idempotencyKey.
+          required: false
+          schema:
+            type: string
+            example: swap-retry-2026-08-23-001
       requestBody:
         required: true
         content:
@@ -2399,6 +2413,13 @@ components:
           type: string
           description: Optional MEMO_ID (numeric uint64) echoed on-chain for reconciliation.
           example: "123456789"
+        idempotencyKey:
+          type: string
+          description: Optional idempotency key. Prefer the `Idempotency-Key` request
+            header; when both are set, the header wins. Retries with the same
+            key return the existing swap instead of building another
+            transaction.
+          example: swap-retry-2026-08-23-001
       required:
         - amount
         - destAssetCode
@@ -2472,6 +2493,12 @@ components:
           type: object
           nullable: true
           example: null
+        idempotencyKey:
+          type: object
+          nullable: true
+          example: swap-retry-2026-08-23-001
+          description: Client idempotency key when supplied via Idempotency-Key / body
+            (null otherwise).
         commissionMemo:
           type: object
           nullable: true

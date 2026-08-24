@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -15,6 +16,10 @@ import {
 import QRCode from 'qrcode';
 import { AppConfig, StellarNetwork } from '../config/configuration';
 import { GatewayConsumer } from '../common/interfaces/gateway-consumer.interface';
+import {
+  isUniqueViolation,
+  uniqueViolationTarget,
+} from '../common/prisma-errors';
 import { PrismaService } from '../prisma/prisma.service';
 import { StellarService } from '../stellar/stellar.service';
 import type {
@@ -133,13 +138,37 @@ export class SwapsService {
    * Builds the unsigned swap transaction and persists it. Returns the XDR + a
    * SEP-7 `tx` URI + QR for the customer's wallet to sign, then submitted back
    * via {@link submit}.
+   *
+   * Idempotency: pass `Idempotency-Key` (header) or `idempotencyKey` (body). The
+   * same key for a consumer returns the existing swap instead of building another
+   * transaction (and never mints a second `SWAP_CREATED`). Without a key, the
+   * unique `(network, txHash)` constraint still rejects a byte-identical rebuild
+   * with 409. Optional `STELLAR_SWAP_SINGLE_INFLIGHT=true` rejects a second
+   * non-expired PENDING swap for the same `(consumer, source, network)` with 409.
    */
   async create(
     consumer: GatewayConsumer,
     dto: CreateSwapDto,
+    headerIdempotencyKey?: string,
   ): Promise<SwapView> {
     const network = this.resolveNetwork(consumer);
     const local = await this.resolveConsumer(consumer);
+    const idempotencyKey = this.resolveIdempotencyKey(
+      headerIdempotencyKey,
+      dto.idempotencyKey,
+    );
+
+    // Fast path: same key → same swap (no Horizon round-trip).
+    if (idempotencyKey) {
+      const existing = await this.findByIdempotencyKey(
+        local.id,
+        idempotencyKey,
+      );
+      if (existing) return this.withQr(existing);
+    }
+
+    await this.assertNoInflightSwap(local.id, dto.source, network);
+
     const priced = await this.priceSwap(
       network,
       dto,
@@ -207,33 +236,42 @@ export class SwapsService {
     const txHash = tx.hash().toString('hex');
     const uri = `web+stellar:tx?${new URLSearchParams({ xdr }).toString()}`;
 
-    const swap = await this.prisma.swap.create({
-      data: {
-        consumerId: local.id,
-        network,
-        source: dto.source,
-        destination,
-        sendAsset: priced.send.code,
-        sendAssetIssuer: priced.send.issuer,
-        sendAmount: priced.sendAmount,
-        feeAmount: priced.feeAmount,
-        feeBps: priced.feeBps,
-        swapAmount: priced.swapAmount,
-        destAsset: priced.dest.code,
-        destAssetIssuer: priced.dest.issuer,
-        destEstimated: priced.estimated,
-        destMin: priced.destMin,
-        slippageBps: priced.slippageBps,
-        path: priced.path as unknown as Prisma.InputJsonValue,
-        memo,
-        status: 'PENDING',
-        xdr,
-        uri,
-        txHash,
-        // The tx is only valid for its timeout window; after that it can't settle.
-        expiresAt: new Date(Date.now() + stellarCfg.timeoutSeconds * 1000),
-      },
+    const swap = await this.persistSwap({
+      consumerId: local.id,
+      network,
+      source: dto.source,
+      destination,
+      sendAsset: priced.send.code,
+      sendAssetIssuer: priced.send.issuer,
+      sendAmount: priced.sendAmount,
+      feeAmount: priced.feeAmount,
+      feeBps: priced.feeBps,
+      swapAmount: priced.swapAmount,
+      destAsset: priced.dest.code,
+      destAssetIssuer: priced.dest.issuer,
+      destEstimated: priced.estimated,
+      destMin: priced.destMin,
+      slippageBps: priced.slippageBps,
+      path: priced.path as unknown as Prisma.InputJsonValue,
+      memo,
+      idempotencyKey,
+      status: 'PENDING',
+      xdr,
+      uri,
+      txHash,
+      // The tx is only valid for its timeout window; after that it can't settle.
+      expiresAt: new Date(Date.now() + stellarCfg.timeoutSeconds * 1000),
     });
+
+    // Race: another request with the same key won the insert — return theirs.
+    if (!swap) {
+      const raced = await this.findByIdempotencyKey(local.id, idempotencyKey!);
+      if (raced) return this.withQr(raced);
+      throw new ConflictException(
+        'A swap with this transaction hash already exists for this network. ' +
+          'Retry with an Idempotency-Key, or wait for the prior swap to settle/expire.',
+      );
+    }
 
     this.logger.log(
       `Created swap ${swap.id}: ${priced.sendAmount} ${this.label(priced.send)} → ` +
@@ -241,6 +279,84 @@ export class SwapsService {
     );
     await this.emit(consumer.username, 'SWAP_CREATED', swap);
     return this.withQr(swap);
+  }
+
+  /**
+   * Persists a new swap. Returns null on an idempotency-key unique violation so
+   * the caller can fall back to the existing row. A `(network, txHash)` collision
+   * without a recoverable idempotency key throws {@link ConflictException}.
+   */
+  private async persistSwap(
+    data: Prisma.SwapUncheckedCreateInput,
+  ): Promise<Swap | null> {
+    try {
+      return await this.prisma.swap.create({ data });
+    } catch (err) {
+      if (!isUniqueViolation(err)) throw err;
+      const target = uniqueViolationTarget(err);
+      const isIdempotencyRace =
+        target.some((t) => t.includes('idempotencyKey')) ||
+        (Boolean(data.idempotencyKey) &&
+          !target.some((t) => t.includes('txHash')));
+      if (isIdempotencyRace) return null;
+      throw new ConflictException(
+        'A swap with this transaction hash already exists for this network. ' +
+          'Two creates rebuilt the same Stellar sequence/XDR — use an ' +
+          'Idempotency-Key on retries, or wait for the prior swap to settle/expire.',
+      );
+    }
+  }
+
+  /** Header wins over body; blank strings are treated as absent. */
+  private resolveIdempotencyKey(
+    header?: string,
+    body?: string,
+  ): string | null {
+    const raw = (header ?? body)?.trim();
+    return raw ? raw : null;
+  }
+
+  private async findByIdempotencyKey(
+    consumerId: string,
+    idempotencyKey: string,
+  ): Promise<Swap | null> {
+    return this.prisma.swap.findUnique({
+      where: {
+        consumerId_idempotencyKey: { consumerId, idempotencyKey },
+      },
+    });
+  }
+
+  /**
+   * Optional guard (`STELLAR_SWAP_SINGLE_INFLIGHT`): at most one non-expired
+   * PENDING swap per (consumer, source, network). Off by default.
+   */
+  private async assertNoInflightSwap(
+    consumerId: string,
+    source: string,
+    network: string,
+  ): Promise<void> {
+    const { singleInflight } = this.config.get('stellar', {
+      infer: true,
+    }).swap;
+    if (!singleInflight) return;
+
+    const existing = await this.prisma.swap.findFirst({
+      where: {
+        consumerId,
+        source,
+        network,
+        status: 'PENDING',
+        OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (existing) {
+      throw new ConflictException(
+        `An in-flight swap already exists for this source account (id=${existing.id}). ` +
+          'Wait for it to settle/expire, or disable STELLAR_SWAP_SINGLE_INFLIGHT.',
+      );
+    }
   }
 
   // ── Read (list) ─────────────────────────────────────────────────────────────
@@ -561,6 +677,21 @@ export class SwapsService {
   }
 
   /**
+   * Same status transition as {@link finalizeSucceeded} but never emits a
+   * webhook. Used by the observer for historical duplicate-hash rows so one
+   * on-chain tx yields a single `SWAP_SUCCEEDED`.
+   */
+  async finalizeSucceededQuiet(
+    id: string,
+    txHash?: string,
+  ): Promise<{ applied: boolean; swap: Swap }> {
+    return this.guardedUpdate(id, SWAP_CAN_SUCCEED_STATUSES, {
+      status: 'SUCCEEDED',
+      ...(txHash ? { txHash } : {}),
+    });
+  }
+
+  /**
    * Marks FAILED only while the row is still in-flight. A settled
    * (`SUCCEEDED`) swap is left untouched.
    */
@@ -575,6 +706,18 @@ export class SwapsService {
     );
     if (applied) await this.emit(username, 'SWAP_FAILED', swap);
     return { applied, swap };
+  }
+
+  /**
+   * Same status transition as {@link finalizeFailed} without a webhook — for
+   * duplicate-hash phantom rows in the observer.
+   */
+  async finalizeFailedQuiet(
+    id: string,
+  ): Promise<{ applied: boolean; swap: Swap }> {
+    return this.guardedUpdate(id, SWAP_IN_FLIGHT_STATUSES, {
+      status: 'FAILED',
+    });
   }
 
   /**

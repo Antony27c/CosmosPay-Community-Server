@@ -36,4 +36,16 @@ export class CreateSwapDto extends QuoteSwapDto {
   @IsString()
   @Matches(/^\d+$/, { message: 'memo must be a numeric MEMO_ID (uint64)' })
   memo?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Optional idempotency key. Prefer the `Idempotency-Key` request header; ' +
+      'when both are set, the header wins. Retries with the same key return ' +
+      'the existing swap instead of building another transaction.',
+    example: 'swap-retry-2026-08-23-001',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/\S/, { message: 'idempotencyKey must not be blank' })
+  idempotencyKey?: string;
 }

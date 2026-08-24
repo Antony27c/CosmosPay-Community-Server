@@ -63,6 +63,12 @@ export interface AppConfig {
       slippageBps: number;
       // Hard cap on caller-supplied slippage, to bound how much they can lose.
       maxSlippageBps: number;
+      /**
+       * When true, reject create if the same (consumer, source, network) already
+       * has a non-expired PENDING swap (409). Off by default — concurrent
+       * distinct swaps from one account are legitimate; prefer Idempotency-Key.
+       */
+      singleInflight: boolean;
     };
   };
   observer: {
@@ -174,6 +180,9 @@ export default (): AppConfig => ({
         process.env.STELLAR_SWAP_MAX_SLIPPAGE_BPS ?? '500',
         10,
       ),
+      singleInflight:
+        (process.env.STELLAR_SWAP_SINGLE_INFLIGHT ?? 'false').toLowerCase() ===
+        'true',
     },
   },
   observer: {

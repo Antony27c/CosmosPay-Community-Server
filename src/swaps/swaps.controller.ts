@@ -1,6 +1,15 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Param,
+  Post,
+  Query,
+} from '@nestjs/common';
 import {
   ApiCreatedResponse,
+  ApiHeader,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
@@ -46,12 +55,21 @@ export class SwapsController {
     summary:
       'Create a swap → unsigned XDR + SEP-7 tx URI + QR for the wallet to sign',
   })
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description:
+      'Optional idempotency key. Retries with the same key return the existing ' +
+      'swap (same id and txHash). Takes precedence over body.idempotencyKey.',
+    example: 'swap-retry-2026-08-23-001',
+  })
   @ApiCreatedResponse({ type: SwapEntity })
   create(
     @CurrentConsumer() consumer: GatewayConsumer,
     @Body() dto: CreateSwapDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.swaps.create(consumer, dto);
+    return this.swaps.create(consumer, dto, idempotencyKey);
   }
 
   @Get()
