@@ -1,9 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString } from 'class-validator';
+import { IsIn, IsString } from 'class-validator';
 import {
   CHAIN_VARIANTS,
   type ChainVariant,
 } from '../../blindpay/blindpay.constants';
+import { IsRequiredForChain } from '../../common/validators/is-required-for-chain.validator';
+import { IsWalletAddressForChain } from '../../common/validators/is-wallet-address-for-chain.validator';
 
 /**
  * Executes an offramp from a quote. For EVM the customer must have already sent
@@ -16,9 +18,12 @@ export class CreatePayoutDto {
   quote_id!: string;
 
   @ApiProperty({
-    example: 'GCALNQQBXAPZ2WIRSDDBMSTAKCUH5SG6U76YBFLQLIXJTF7FE5AX7AOO',
+    example: '0x1234567890123456789012345678901234567890',
+    description:
+      'Sender wallet on the selected chain (EVM 0x…, Stellar G…, or Solana base58).',
   })
   @IsString()
+  @IsWalletAddressForChain('chain')
   sender_wallet_address!: string;
 
   @ApiProperty({ enum: CHAIN_VARIANTS, example: 'evm' })
@@ -27,9 +32,8 @@ export class CreatePayoutDto {
 
   @ApiPropertyOptional({
     description:
-      'Signed transaction (Stellar XDR / Solana tx) from the authorize step.',
+      'Required for stellar/solana: signed transaction (Stellar XDR / Solana tx) from POST /v1/offramp/payouts/authorize. Not used for evm.',
   })
-  @IsOptional()
-  @IsString()
+  @IsRequiredForChain('chain', ['stellar', 'solana'])
   signed_transaction?: string;
 }

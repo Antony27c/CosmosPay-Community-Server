@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString } from 'class-validator';
+import { IsStellarAddress } from '../../common/validators/is-stellar-address.validator';
 
 /**
  * Builds an unsigned Stellar trustline transaction so a wallet can hold the
@@ -11,6 +11,6 @@ export class CreateTrustlineDto {
     example: 'GCALNQQBXAPZ2WIRSDDBMSTAKCUH5SG6U76YBFLQLIXJTF7FE5AX7AOO',
     description: 'Stellar address that needs the asset trustline.',
   })
-  @IsString()
+  @IsStellarAddress()
   address!: string;
 }
