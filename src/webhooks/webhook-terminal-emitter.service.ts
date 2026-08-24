@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import type { WebhookEventType } from '../../generated/prisma/client';
+import { isUniqueViolation } from '../common/prisma-errors';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   WEBHOOK_EVENT,
@@ -73,7 +74,7 @@ export class WebhookTerminalEmitter {
       });
       return true;
     } catch (err) {
-      if (isUniqueConstraint(err)) return false;
+      if (isUniqueViolation(err)) return false;
       throw err;
     }
   }
@@ -101,9 +102,4 @@ function settlementEpochOf(data: unknown): number {
     return (data as { settlementEpoch: number }).settlementEpoch;
   }
   return 0;
-}
-
-/** True for a Prisma unique-constraint violation (P2002). */
-function isUniqueConstraint(err: unknown): boolean {
-  return (err as { code?: string })?.code === 'P2002';
 }

@@ -385,6 +385,15 @@ otherwise. (XLM needs no trustline.)
 same fields plus `source` (the paying/signing account); `destination` defaults to
 `source` (a self-swap) and an optional `memo` (MEMO_ID) is echoed on-chain.
 
+Optional **idempotency** (issue #17): send an `Idempotency-Key` header (preferred)
+or `idempotencyKey` in the body. Retries with the same key for the same consumer
+return the **existing** swap (`id` + `txHash`) instead of building another Stellar
+transaction. Without a key, the unique `(network, txHash)` constraint still rejects
+a byte-identical rebuild with **409** (sequence / XDR collision). When
+`STELLAR_SWAP_SINGLE_INFLIGHT=true`, a second non-expired `PENDING` swap for the
+same `(consumer, source, network)` also returns **409** naming the existing id
+(default **off** — concurrent distinct swaps from one account remain allowed).
+
 ```jsonc
 // response → { id, status: "PENDING", network, sendAmount, feeAmount, swapAmount,
 //              destEstimated, destMin, path, xdr, uri: "web+stellar:tx?xdr=…", qr, txHash, … }
@@ -481,6 +490,7 @@ at least `DATABASE_URL` and `APISIX_GATEWAY_SECRET`.
 | `STELLAR_SWAP_FEE_BPS` | no | `50` | Swap fee in basis points |
 | `STELLAR_SWAP_SLIPPAGE_BPS` | no | `50` | Default swap slippage tolerance (bps) |
 | `STELLAR_SWAP_MAX_SLIPPAGE_BPS` | no | `500` | Hard cap on caller slippage (bps) |
+| `STELLAR_SWAP_SINGLE_INFLIGHT` | no | `false` | When `true`, 409 if a non-expired PENDING swap already exists for the same source |
 | `OBSERVER_ENABLED` | no | `true` | `true` / `false` — on-chain reconciler |
 | `OBSERVER_INTERVAL_MS` | no | `15000` | Observer poll interval (ms, min 1000) |
 | `OBSERVER_BATCH_SIZE` | no | `50` | Max intents/swaps per observer tick |

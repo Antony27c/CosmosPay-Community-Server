@@ -179,6 +179,15 @@ export class SwapEntity {
 
   @ApiProperty({
     nullable: true,
+    required: false,
+    example: 'swap-retry-2026-08-23-001',
+    description:
+      'Client idempotency key when supplied via Idempotency-Key / body (null otherwise).',
+  })
+  idempotencyKey?: string | null;
+
+  @ApiProperty({
+    nullable: true,
     example: 'Cosmos Swap Commission',
     description:
       'On-chain MEMO_TEXT label stamped when a commission is collected and no ' +
