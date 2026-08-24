@@ -48,6 +48,16 @@ export interface AppConfig {
     intervalMs: number;
     batchSize: number;
   };
+  requestLogRetention: {
+    // Days to keep RequestLog rows. 0 disables the prune job entirely.
+    retentionDays: number;
+    // How often the prune cycle runs.
+    pruneIntervalMs: number;
+    // Rows deleted per deleteMany (keeps each lock short).
+    batchSize: number;
+    // Hard cap on total rows deleted in one tick (catch-up without unbounded work).
+    maxPerCycle: number;
+  };
   paymentIntents: {
     // Lifetime of a payment intent; unpaid intents past this are marked EXPIRED.
     ttlSeconds: number;
@@ -138,6 +148,21 @@ export default (): AppConfig => ({
     enabled: (process.env.OBSERVER_ENABLED ?? 'true').toLowerCase() !== 'false',
     intervalMs: parseInt(process.env.OBSERVER_INTERVAL_MS ?? '15000', 10),
     batchSize: parseInt(process.env.OBSERVER_BATCH_SIZE ?? '50', 10),
+  },
+  requestLogRetention: {
+    // Append-only API access log (ip / userAgent). Pruned so PII is not kept forever.
+    retentionDays: parseInt(process.env.REQUEST_LOG_RETENTION_DAYS ?? '30', 10),
+    pruneIntervalMs: parseInt(
+      process.env.REQUEST_LOG_PRUNE_INTERVAL_MS ?? '3600000',
+      10,
+    ),
+    // Each deleteMany is capped so locks stay short; the tick loops until the
+    // backlog is drained or maxPerCycle is hit (catches up after long outages).
+    batchSize: parseInt(process.env.REQUEST_LOG_PRUNE_BATCH_SIZE ?? '1000', 10),
+    maxPerCycle: parseInt(
+      process.env.REQUEST_LOG_PRUNE_MAX_PER_CYCLE ?? '50000',
+      10,
+    ),
   },
   paymentIntents: {
     ttlSeconds: parseInt(process.env.PAYMENT_INTENT_TTL_SECONDS ?? '3600', 10),

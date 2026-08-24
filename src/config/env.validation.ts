@@ -121,6 +121,27 @@ class EnvironmentVariables {
   @IsInt()
   @Min(1)
   BLINDPAY_TIMEOUT_MS?: number;
+
+  // --- Request log retention (API logs / PII prune) ---
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  REQUEST_LOG_RETENTION_DAYS?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  REQUEST_LOG_PRUNE_INTERVAL_MS?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  REQUEST_LOG_PRUNE_BATCH_SIZE?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  REQUEST_LOG_PRUNE_MAX_PER_CYCLE?: number;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

@@ -225,11 +225,15 @@ export class AnalyticsService {
   // ── API request logs (real inbound requests, with details) ──────────────────
   async apiLogs(consumer: GatewayConsumer, take = 100) {
     // RequestLog is keyed by the forwarded consumer username (not the local id).
-    const rows = await this.prisma.requestLog.findMany({
-      where: { consumer: consumer.username },
-      orderBy: { createdAt: 'desc' },
-      take,
-    });
+    const where = { consumer: consumer.username };
+    const [rows, total] = await Promise.all([
+      this.prisma.requestLog.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take,
+      }),
+      this.prisma.requestLog.count({ where }),
+    ]);
     const data = rows.map((r) => ({
       id: r.id,
       method: r.method,
@@ -242,7 +246,7 @@ export class AnalyticsService {
         r.statusCode < 400 ? 'ok' : r.statusCode < 500 ? 'pending' : 'fail',
       at: r.createdAt,
     }));
-    return { data, total: data.length };
+    return { data, total };
   }
 
   // ── Webhook delivery logs (across all the consumer's endpoints) ──────────────
