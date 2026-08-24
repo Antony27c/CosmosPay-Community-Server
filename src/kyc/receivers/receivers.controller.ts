@@ -12,6 +12,7 @@ import {
   ApiCreatedResponse,
   ApiOkResponse,
   ApiOperation,
+  ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
 import { CurrentConsumer } from '../../common/decorators/current-consumer.decorator';
@@ -70,6 +71,12 @@ export class ReceiversController {
     summary:
       'Approve a pending-review receiver (owner/admin review gate); sends the customer the terms link and returns it',
   })
+  @ApiOkResponse({ description: 'Receiver approved; terms link returned' })
+  @ApiResponse({
+    status: 409,
+    description:
+      "Invalid KYC status transition (e.g. receiver is not in 'pending_review')",
+  })
   approve(
     @CurrentConsumer() consumer: GatewayConsumer,
     @Param('id') id: string,
@@ -107,6 +114,11 @@ export class ReceiversController {
     summary: 'Enable an inactive receiver with an accepted terms-of-service id',
   })
   @ApiOkResponse({ type: ReceiverEntity })
+  @ApiResponse({
+    status: 409,
+    description:
+      "Invalid KYC status transition (e.g. receiver is not in 'pending_user')",
+  })
   enable(
     @CurrentConsumer() consumer: GatewayConsumer,
     @Param('id') id: string,

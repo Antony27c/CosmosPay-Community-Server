@@ -1590,8 +1590,11 @@
           }
         },
         "responses": {
-          "201": {
-            "description": ""
+          "200": {
+            "description": "Receiver approved; terms link returned"
+          },
+          "409": {
+            "description": "Invalid KYC status transition (e.g. receiver is not in 'pending_review')"
           }
         },
         "summary": "Approve a pending-review receiver (owner/admin review gate); sends the customer the terms link and returns it",
@@ -1683,6 +1686,9 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Invalid KYC status transition (e.g. receiver is not in 'pending_user')"
           }
         },
         "summary": "Enable an inactive receiver with an accepted terms-of-service id",

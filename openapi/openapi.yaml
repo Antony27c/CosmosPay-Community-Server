@@ -981,8 +981,11 @@ paths:
             schema:
               $ref: "#/components/schemas/ApproveReceiverDto"
       responses:
-        "201":
-          description: ""
+        "200":
+          description: Receiver approved; terms link returned
+        "409":
+          description: Invalid KYC status transition (e.g. receiver is not in
+            'pending_review')
       summary: Approve a pending-review receiver (owner/admin review gate); sends the
         customer the terms link and returns it
       tags: *a10
@@ -1039,6 +1042,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ReceiverEntity"
+        "409":
+          description: Invalid KYC status transition (e.g. receiver is not in
+            'pending_user')
       summary: Enable an inactive receiver with an accepted terms-of-service id
       tags: *a10
   /v1/kyc/receivers/{id}/access:

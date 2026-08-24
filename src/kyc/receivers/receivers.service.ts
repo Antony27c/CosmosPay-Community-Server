@@ -14,7 +14,7 @@ import {
   BlindpaySyncService,
   BlindpayObject,
 } from '../../blindpay/blindpay-sync.service';
-import { asString, toJson } from '../../blindpay/blindpay.util';
+import { asNullableString, asString, toJson } from '../../blindpay/blindpay.util';
 import type { BlindpayReceiver } from '../../../generated/prisma/client';
 import type { AdminAuditData } from '../../admin/admin-audit.service';
 import { recordAuditInTransaction } from '../../admin/admin-audit.service';
@@ -23,6 +23,7 @@ import { UpdateReceiverDto } from './dto/update-receiver.dto';
 import { RequestTosDto } from './dto/request-tos.dto';
 import type { AppConfig } from '../../config/configuration';
 import { assertRedirectAllowed } from '../redirect-url-whitelist';
+import { assertTransition } from './receiver-state';
 
 /** Local placeholder id for a receiver that doesn't exist at BlindPay yet. */
 const LOCAL_PREFIX = 'local_';
@@ -120,11 +121,7 @@ export class ReceiversService {
       where: { id },
     });
     if (!row) throw new NotFoundException('Receiver not found');
-    if (row.kycStatus !== 'pending_review') {
-      throw new BadRequestException(
-        `Receiver must be pending review to approve (current: ${row.kycStatus ?? 'unknown'}).`,
-      );
-    }
+    assertTransition(row.kycStatus, 'pending_user');
     // BlindPay side-effect cannot join the DB transaction; local write + audit can.
     await this.assertRedirectForReceiver(row.consumerId, redirectUrl);
     const url = await this.tosUrl(redirectUrl, row);
@@ -301,11 +298,8 @@ export class ReceiversService {
       return refreshed;
     }
     // The customer can only accept terms after our owner/admin review approved it.
-    if (row.kycStatus !== 'pending_user') {
-      throw new BadRequestException(
-        'Receiver must be approved (terms sent) before it can be activated.',
-      );
-    }
+    // Handoff target is BlindPay's typical first status; mirrorReceiver writes the real one.
+    assertTransition(row.kycStatus, 'verifying');
 
     const payload = (row.raw ?? {}) as Record<string, unknown>;
     const created = await this.blindpay.post<BlindpayObject>(
@@ -377,6 +371,39 @@ export class ReceiversService {
     // forged. Strip it from any update so it's immutable post-validation.
     const patch: Record<string, unknown> = { ...dto };
     delete patch.tos_id;
+
+    // Local-only receivers (inactive / pending_review / pending_user) do not exist at
+    // BlindPay yet — merge into the stored create payload instead of PUTting upstream.
+    if (row.blindpayId.startsWith(LOCAL_PREFIX)) {
+      const merged: Record<string, unknown> = {
+        ...((row.raw ?? {}) as Record<string, unknown>),
+        ...patch,
+      };
+      const mergedDto = merged as unknown as CreateReceiverDto;
+      let kycStatus = row.kycStatus;
+      // Any edit after our review gate must re-enter pending_review — otherwise a
+      // kyc:write caller could mutate tax_id/docs post-approve and enable() would
+      // POST never-reviewed data to BlindPay.
+      if (row.kycStatus === 'pending_user' && Object.keys(patch).length > 0) {
+        assertTransition(row.kycStatus, 'pending_review');
+        kycStatus = 'pending_review';
+      } else if (hasKycData(mergedDto) && row.kycStatus === 'inactive') {
+        assertTransition(row.kycStatus, 'pending_review');
+        kycStatus = 'pending_review';
+      }
+      return this.prisma.blindpayReceiver.update({
+        where: { id: row.id },
+        data: {
+          raw: toJson(merged),
+          name: receiverName(mergedDto),
+          email: asNullableString(merged.email),
+          country: asNullableString(merged.country),
+          externalId: asNullableString(merged.external_id),
+          kycStatus,
+        },
+      });
+    }
+
     const updated = await this.blindpay.put<BlindpayObject>(
       this.blindpay.instancePath(`/customers/${row.blindpayId}`),
       patch,
