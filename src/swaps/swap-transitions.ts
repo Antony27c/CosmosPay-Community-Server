@@ -26,14 +26,26 @@ export const SWAP_IN_FLIGHT_STATUSES = [
 ] as const satisfies readonly SwapStatus[];
 
 /**
- * Statuses that may still be promoted to SUCCEEDED. FAILED is included so a
- * Horizon rejection cannot beat on-chain inclusion (observer/submit success
- * heals a false failure).
+ * Statuses that may still be promoted to SUCCEEDED. FAILED and EXPIRED are
+ * included so a Horizon rejection / false expiry cannot beat on-chain inclusion
+ * (observer/submit success heals a false terminal).
  */
 export const SWAP_CAN_SUCCEED_STATUSES = [
   'PENDING',
   'SUBMITTED',
   'FAILED',
+  'EXPIRED',
+] as const satisfies readonly SwapStatus[];
+
+/**
+ * Statuses that may still be marked FAILED. EXPIRED is included so the
+ * settlement observer's 24h rescue sweep can correct a false expiry when
+ * Horizon later reports an unsuccessful tx.
+ */
+export const SWAP_CAN_FAIL_STATUSES = [
+  'PENDING',
+  'SUBMITTED',
+  'EXPIRED',
 ] as const satisfies readonly SwapStatus[];
 
 /** Statuses from which submit may mark the row SUBMITTED. */

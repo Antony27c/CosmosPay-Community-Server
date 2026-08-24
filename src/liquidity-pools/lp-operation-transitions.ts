@@ -31,14 +31,25 @@ export const LP_IN_FLIGHT_STATUSES = [
 ] as const satisfies readonly LpOperationStatus[];
 
 /**
- * Statuses that may still be promoted to SUCCEEDED. FAILED is included so a
- * Horizon rejection cannot beat on-chain inclusion (observer/submit success
- * heals a false failure).
+ * Statuses that may still be promoted to SUCCEEDED. FAILED and EXPIRED are
+ * included so a Horizon rejection / false expiry cannot beat on-chain inclusion
+ * (observer/submit success heals a false terminal).
  */
 export const LP_CAN_SUCCEED_STATUSES = [
   'PENDING',
   'SUBMITTED',
   'FAILED',
+  'EXPIRED',
+] as const satisfies readonly LpOperationStatus[];
+
+/**
+ * Statuses that may still be marked FAILED. EXPIRED is included for the
+ * settlement observer's 24h rescue of a false expiry.
+ */
+export const LP_CAN_FAIL_STATUSES = [
+  'PENDING',
+  'SUBMITTED',
+  'EXPIRED',
 ] as const satisfies readonly LpOperationStatus[];
 
 /** Statuses from which submit may mark the row SUBMITTED. */
@@ -53,9 +64,10 @@ export const LP_LIQUIDATED_STATUS =
 
 /**
  * Declared transition graph. Deny-by-default — undeclared edges are invalid.
- * SUCCEEDED and EXPIRED have no outbound edges (true terminals). FAILED may
- * return to SUBMITTED / SUCCEEDED because a retry (or a late on-chain lookup)
- * can still confirm the transaction.
+ * SUCCEEDED has no outbound edges (true terminal). EXPIRED may still move to
+ * SUCCEEDED / FAILED when the settlement observer rescues a false expiry
+ * within its lookback window. FAILED may return to SUBMITTED / SUCCEEDED
+ * because a retry (or a late on-chain lookup) can still confirm the transaction.
  */
 export const LP_OPERATION_TRANSITIONS: Record<
   LpOperationStatus,
@@ -65,7 +77,7 @@ export const LP_OPERATION_TRANSITIONS: Record<
   SUBMITTED: ['SUCCEEDED', 'FAILED', 'EXPIRED'],
   FAILED: ['SUBMITTED', 'SUCCEEDED'],
   SUCCEEDED: [],
-  EXPIRED: [],
+  EXPIRED: ['SUCCEEDED', 'FAILED'],
 };
 
 export function canTransitionLp(

@@ -35,6 +35,7 @@ import {
   proportionalShare,
 } from './lp-math';
 import {
+  LP_CAN_FAIL_STATUSES,
   LP_CAN_SUCCEED_STATUSES,
   LP_IN_FLIGHT_STATUSES,
   type LpOperationStatus,
@@ -829,7 +830,7 @@ export class LiquidityPoolsService {
   ): Promise<{ applied: boolean; operation: LiquidityPoolOperation }> {
     const { applied, operation } = await this.guardedUpdate(
       id,
-      LP_IN_FLIGHT_STATUSES,
+      LP_CAN_FAIL_STATUSES,
       { status: 'FAILED' },
     );
     if (applied) await this.emit(username, 'LIQUIDITY_FAILED', operation);
@@ -838,12 +839,19 @@ export class LiquidityPoolsService {
 
   /**
    * Marks EXPIRED only while the row is still in-flight. Never degrades a
-   * liquidated operation.
+   * liquidated operation. Emits `LIQUIDITY_EXPIRED` when this writer wins.
    */
   async finalizeExpired(
     id: string,
+    username: string,
   ): Promise<{ applied: boolean; operation: LiquidityPoolOperation }> {
-    return this.guardedUpdate(id, LP_IN_FLIGHT_STATUSES, { status: 'EXPIRED' });
+    const { applied, operation } = await this.guardedUpdate(
+      id,
+      LP_IN_FLIGHT_STATUSES,
+      { status: 'EXPIRED' },
+    );
+    if (applied) await this.emit(username, 'LIQUIDITY_EXPIRED', operation);
+    return { applied, operation };
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────────

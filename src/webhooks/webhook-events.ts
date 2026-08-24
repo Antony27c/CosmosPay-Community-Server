@@ -31,8 +31,10 @@ export class WebhookEventPayload {
 export const TERMINAL_WEBHOOK_EVENTS = [
   'SWAP_SUCCEEDED',
   'SWAP_FAILED',
+  'SWAP_EXPIRED',
   'LIQUIDITY_SUCCEEDED',
   'LIQUIDITY_FAILED',
+  'LIQUIDITY_EXPIRED',
 ] as const satisfies readonly WebhookEventType[];
 
 export type TerminalWebhookEventType = (typeof TERMINAL_WEBHOOK_EVENTS)[number];
