@@ -171,6 +171,31 @@ describe('validateEnv', () => {
       ).toBe('https://horizon.stellar.org');
     });
 
+    it('rejects STELLAR_HTTP_TIMEOUT_MS=abc', () => {
+      expectEnvError(
+        validEnv({ STELLAR_HTTP_TIMEOUT_MS: 'abc' }),
+        'STELLAR_HTTP_TIMEOUT_MS',
+      );
+    });
+
+    it('rejects STELLAR_MAX_ATTEMPTS=0', () => {
+      expectEnvError(
+        validEnv({ STELLAR_MAX_ATTEMPTS: '0' }),
+        'STELLAR_MAX_ATTEMPTS',
+      );
+    });
+
+    it('accepts STELLAR_HTTP_TIMEOUT_MS and STELLAR_MAX_ATTEMPTS', () => {
+      const result = validateEnv(
+        validEnv({
+          STELLAR_HTTP_TIMEOUT_MS: '10000',
+          STELLAR_MAX_ATTEMPTS: '3',
+        }),
+      );
+      expect(result.STELLAR_HTTP_TIMEOUT_MS).toBe(10000);
+      expect(result.STELLAR_MAX_ATTEMPTS).toBe(3);
+    });
+
     it('rejects invalid OPENAPI_SERVER_URL', () => {
       expectEnvError(
         validEnv({ OPENAPI_SERVER_URL: 'not-a-url' }),

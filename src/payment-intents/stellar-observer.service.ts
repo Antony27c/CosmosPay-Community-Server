@@ -5,8 +5,10 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { armObserverWatchdog } from '../common/observer-watchdog';
 import { AppConfig } from '../config/configuration';
 import { PrismaService } from '../prisma/prisma.service';
+import { StellarService } from '../stellar/stellar.service';
 import { PaymentIntentsService } from './payment-intents.service';
 import { StellarVerifierService } from './stellar-verifier.service';
 
@@ -25,12 +27,14 @@ export class StellarObserverService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(StellarObserverService.name);
   private timer?: NodeJS.Timeout;
   private running = false;
+  private cycleGeneration = 0;
 
   constructor(
     private readonly config: ConfigService<AppConfig, true>,
     private readonly prisma: PrismaService,
     private readonly verifier: StellarVerifierService,
     private readonly paymentIntents: PaymentIntentsService,
+    private readonly stellar: StellarService,
   ) {}
 
   onModuleInit(): void {
@@ -53,15 +57,37 @@ export class StellarObserverService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /** True while a reconciliation cycle is in flight. Exposed for tests. */
+  isRunning(): boolean {
+    return this.running;
+  }
+
   /** One reconciliation cycle. Guarded so cycles never overlap. */
   async tick(): Promise<void> {
     if (this.running) {
       return;
     }
     this.running = true;
-    try {
-      const { batchSize } = this.config.get('observer', { infer: true });
+    const generation = ++this.cycleGeneration;
+    const { batchSize, intervalMs } = this.config.get('observer', {
+      infer: true,
+    });
+    const cancelWatchdog = armObserverWatchdog({
+      logger: this.logger,
+      name: 'Payment-intent observer',
+      observer: 'payment-intents',
+      stellar: this.stellar,
+      intervalMs,
+      generation,
+      currentGeneration: () => this.cycleGeneration,
+      setRunning: (value) => {
+        this.running = value;
+      },
+    });
+    const started = Date.now();
+    let reconciled = 0;
 
+    try {
       // 1. Expire unpaid intents past their lifetime.
       const expired = await this.prisma.paymentIntent.findMany({
         where: {
@@ -90,20 +116,38 @@ export class StellarObserverService implements OnModuleInit, OnModuleDestroy {
       });
 
       for (const intent of pending) {
-        await this.reconcile(intent).catch((err) => {
+        try {
+          if (await this.reconcile(intent)) {
+            reconciled += 1;
+          }
+        } catch (err) {
           this.logger.error(
             `Reconcile failed for intent ${intent.id}: ${
               err instanceof Error ? err.message : String(err)
             }`,
           );
-        });
+        }
       }
     } catch (err) {
       this.logger.error(
         `Observer cycle failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     } finally {
-      this.running = false;
+      cancelWatchdog();
+      const durationMs = Date.now() - started;
+      this.stellar.recordObserverCycle('payment-intents', {
+        durationMs,
+        reconciled,
+      });
+      const { horizonErrors, observers } = this.stellar.metrics();
+      this.logger.log(
+        `Observer cycle complete cycles=${observers['payment-intents'].cycles} ` +
+          `reconciled=${reconciled} durationMs=${durationMs} ` +
+          `horizonErrors=${JSON.stringify(horizonErrors)}`,
+      );
+      if (this.cycleGeneration === generation) {
+        this.running = false;
+      }
     }
   }
 
@@ -111,7 +155,7 @@ export class StellarObserverService implements OnModuleInit, OnModuleDestroy {
     intent: Awaited<
       ReturnType<PrismaService['paymentIntent']['findMany']>
     >[number] & { consumer: { apisixUsername: string } },
-  ): Promise<void> {
+  ): Promise<boolean> {
     // Prefer the precise path when a hash was reported; otherwise scan.
     const result = intent.txHash
       ? await this.verifier.verifyByHash(intent, intent.txHash)
@@ -125,6 +169,8 @@ export class StellarObserverService implements OnModuleInit, OnModuleDestroy {
         result.payer,
         'observer',
       );
+      return true;
     }
+    return false;
   }
 }

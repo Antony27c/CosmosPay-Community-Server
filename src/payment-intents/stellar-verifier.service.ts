@@ -1,6 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { Horizon } from '@stellar/stellar-sdk';
-import { StellarService } from '../stellar/stellar.service';
+import { horizonHttpStatus, StellarService } from '../stellar/stellar.service';
 import type { PaymentIntent } from '../../generated/prisma/client';
 import type { StellarNetwork } from '../config/configuration';
 
@@ -22,12 +22,10 @@ export interface VerificationResult {
  */
 @Injectable()
 export class StellarVerifierService {
-  private readonly logger = new Logger(StellarVerifierService.name);
-
   constructor(private readonly stellar: StellarService) {}
 
-  private server(intent: PaymentIntent): Horizon.Server {
-    return this.stellar.server(intent.network as StellarNetwork);
+  private network(intent: PaymentIntent): StellarNetwork {
+    return intent.network as StellarNetwork;
   }
 
   /** Verifies a specific transaction hash against the intent. */
@@ -35,14 +33,14 @@ export class StellarVerifierService {
     intent: PaymentIntent,
     txHash: string,
   ): Promise<VerificationResult> {
-    const server = this.server(intent);
+    const network = this.network(intent);
     let tx: Horizon.ServerApi.TransactionRecord;
     try {
-      tx = await server.transactions().transaction(txHash).call();
+      tx = await this.stellar.call(network, (server) =>
+        server.transactions().transaction(txHash).call(),
+      );
     } catch (err) {
-      const status = (err as { response?: { status?: number } })?.response
-        ?.status;
-      if (status === 404) {
+      if (horizonHttpStatus(err) === 404) {
         return { valid: false, reason: 'Transaction not found on-chain' };
       }
       throw err;
@@ -57,7 +55,9 @@ export class StellarVerifierService {
       return { valid: false, reason: memoCheck.reason };
     }
 
-    const payments = await server.payments().forTransaction(txHash).call();
+    const payments = await this.stellar.call(network, (server) =>
+      server.payments().forTransaction(txHash).call(),
+    );
     const match = payments.records.find((op) =>
       this.paymentMatches(intent, op),
     );
@@ -82,19 +82,19 @@ export class StellarVerifierService {
     intent: PaymentIntent,
     limit = 50,
   ): Promise<VerificationResult> {
-    const server = this.server(intent);
+    const network = this.network(intent);
     let page: Horizon.ServerApi.CollectionPage<Horizon.ServerApi.OperationRecord>;
     try {
-      page = await server
-        .payments()
-        .forAccount(intent.destination)
-        .order('desc')
-        .limit(limit)
-        .call();
+      page = await this.stellar.call(network, (server) =>
+        server
+          .payments()
+          .forAccount(intent.destination)
+          .order('desc')
+          .limit(limit)
+          .call(),
+      );
     } catch (err) {
-      const status = (err as { response?: { status?: number } })?.response
-        ?.status;
-      if (status === 404) {
+      if (horizonHttpStatus(err) === 404) {
         return { valid: false, reason: 'Destination account not found' };
       }
       throw err;
@@ -105,10 +105,9 @@ export class StellarVerifierService {
         continue;
       }
       // Confirm success + memo on the owning transaction.
-      const tx = await server
-        .transactions()
-        .transaction(op.transaction_hash)
-        .call();
+      const tx = await this.stellar.call(network, (server) =>
+        server.transactions().transaction(op.transaction_hash).call(),
+      );
       if (!tx.successful) {
         continue;
       }

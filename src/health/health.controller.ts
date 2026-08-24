@@ -7,6 +7,7 @@ import {
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../common/decorators/public.decorator';
 import { PrismaService } from '../prisma/prisma.service';
+import { StellarHealthIndicator } from './stellar-health.indicator';
 
 /**
  * Liveness/readiness endpoints. Marked @Public() because the orchestrator
@@ -19,6 +20,7 @@ export class HealthController {
     private readonly health: HealthCheckService,
     private readonly prismaHealth: PrismaHealthIndicator,
     private readonly prisma: PrismaService,
+    private readonly stellarHealth: StellarHealthIndicator,
   ) {}
 
   @Get('liveness')
@@ -31,10 +33,13 @@ export class HealthController {
   @Get('readiness')
   @Public()
   @HealthCheck()
-  @ApiOperation({ summary: 'Readiness probe (checks the database)' })
+  @ApiOperation({
+    summary: 'Readiness probe (database + Horizon per configured network)',
+  })
   readiness() {
     return this.health.check([
       () => this.prismaHealth.pingCheck('database', this.prisma),
+      ...this.stellarHealth.checks(),
     ]);
   }
 }

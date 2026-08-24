@@ -170,13 +170,17 @@ function makeStellar() {
   const txCall = jest.fn().mockResolvedValue({ successful: true });
   const account: any = new Account(SOURCE, '1');
   account.balances = [{ asset_type: 'native', balance: '10000' }];
+  const server = {
+    submitTransaction,
+    transactions: () => ({ transaction: () => ({ call: txCall }) }),
+    loadAccount: jest.fn().mockResolvedValue(account),
+  };
   return {
     passphrase: jest.fn().mockReturnValue('Test SDF Network ; September 2015'),
-    server: jest.fn().mockReturnValue({
-      submitTransaction,
-      transactions: () => ({ transaction: () => ({ call: txCall }) }),
-      loadAccount: jest.fn().mockResolvedValue(account),
-    }),
+    server: jest.fn().mockReturnValue(server),
+    call: jest.fn((_network: string, fn: (s: typeof server) => unknown) =>
+      fn(server),
+    ),
     submitTransaction,
     txCall,
   };

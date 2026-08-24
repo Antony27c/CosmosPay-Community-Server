@@ -105,6 +105,22 @@ class EnvironmentVariables {
   @Min(1)
   STELLAR_TX_TIMEOUT?: number;
 
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  STELLAR_HTTP_TIMEOUT_MS?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(20)
+  STELLAR_MAX_ATTEMPTS?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  STELLAR_RETRY_BASE_MS?: number;
+
   // --- Stellar native swaps (path-payment asset exchange) ---
   @IsOptional()
   @IsString()
