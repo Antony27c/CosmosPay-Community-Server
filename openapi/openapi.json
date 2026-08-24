@@ -2111,17 +2111,65 @@
       },
       "get": {
         "operationId": "ProductsController_findAll_v1",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "kind",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "recurring",
+                "one_time",
+                "link"
+              ]
+            }
+          },
+          {
+            "name": "active",
+            "required": false,
+            "in": "query",
+            "description": "Filter by active flag. Omit to return both active and inactive.",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "reference",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": "sku_pro_monthly",
+              "type": "string"
+            }
+          },
+          {
+            "name": "take",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "maximum": 100,
+              "default": 20,
+              "type": "number"
+            }
+          },
+          {
+            "name": "skip",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": 0,
+              "type": "number"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/ProductEntity"
-                  }
+                  "$ref": "#/components/schemas/ProductListEntity"
                 }
               }
             }
@@ -2212,6 +2260,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "hard",
+            "required": false,
+            "in": "query",
+            "description": "If true, permanently delete the row. Default soft-deletes (active=false).",
+            "schema": {
+              "default": false,
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -2226,7 +2284,7 @@
             }
           }
         },
-        "summary": "Delete a product",
+        "summary": "Soft-delete a product (active=false). Pass ?hard=true to permanently delete.",
         "tags": [
           "products"
         ]
@@ -5974,6 +6032,35 @@
           "reference",
           "createdAt",
           "updatedAt"
+        ]
+      },
+      "ProductListEntity": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProductEntity"
+            }
+          },
+          "total": {
+            "type": "number",
+            "example": 1
+          },
+          "take": {
+            "type": "number",
+            "example": 20
+          },
+          "skip": {
+            "type": "number",
+            "example": 0
+          }
+        },
+        "required": [
+          "data",
+          "total",
+          "take",
+          "skip"
         ]
       },
       "UpdateProductDto": {
