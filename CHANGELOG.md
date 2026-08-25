@@ -2,9 +2,19 @@
 
 All notable changes to the Cosmos Pay Community Server are documented here.
 Generated from [Conventional Commits](https://www.conventionalcommits.org) by [git-cliff](https://git-cliff.org).
-## [0.0.11] - 2026-08-25
+## [0.1.0] - 2026-08-25
 
 ### Bug Fixes
+- Keep original secret on rapid re-rotation (c3dd3fc)
+
+## [0.0.11] - 2026-08-25
+
+### Features
+- Overlap signing secrets during rotation (73022f5)
+
+### Bug Fixes
+- Repair broken merge of watchdog and expiry safety (e6616dc)
+- Stop emitting unstable YAML anchors (61f7885)
 - Bound findMatchingPayment by time and persist Horizon cursor (387b129)
 - Restore settlement-observer after broken #56 merge (902ff0c)
 - Key Horizon cursor by intentId (8b58bd8)
