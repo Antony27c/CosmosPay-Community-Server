@@ -120,8 +120,12 @@ Two paths use that single rule:
 - **Automatic (permanent observer):** `StellarObserverService` polls Horizon
   every `OBSERVER_INTERVAL_MS` for `PENDING` intents — by reported `txHash`, or by
   scanning payments to the destination — and finalizes matches the same way, so
-  statuses change and events fire **without anyone calling the API**. Disable for
-  local dev with `OBSERVER_ENABLED=false`.
+  statuses change and events fire **without anyone calling the API**. The
+  settlement observer for swaps and liquidity operations uses the same interval;
+  `OBSERVER_EXPIRY_GRACE_MS` (default **60000**) is extra wait after tx
+  timebounds before a still-unseen hash can be marked `EXPIRED`, and only after
+  repeated Horizon 404s (a 429/5xx never expires a row). Disable for local
+  dev with `OBSERVER_ENABLED=false`.
 
 ### API request logs retention
 
@@ -151,7 +155,9 @@ retries with linear backoff (`WEBHOOK_*` env).
 Event types: `PAYMENT_INTENT_CREATED`, `PAYMENT_INTENT_UPDATED`,
 `PAYMENT_INTENT_SUCCEEDED`, `PAYMENT_INTENT_FAILED`, `PAYMENT_INTENT_CANCELLED`,
 `PAYMENT_INTENT_DELETED`, `SWAP_CREATED`, `SWAP_SUBMITTED`, `SWAP_SUCCEEDED`,
-`SWAP_FAILED` (plus the BlindPay `RECEIVER_UPDATED` / `PAYIN_*` / `PAYOUT_*`).
+`SWAP_FAILED`, `SWAP_EXPIRED`, `LIQUIDITY_CREATED`, `LIQUIDITY_SUBMITTED`,
+`LIQUIDITY_SUCCEEDED`, `LIQUIDITY_FAILED`, `LIQUIDITY_EXPIRED` (plus the BlindPay
+`RECEIVER_UPDATED` / `PAYIN_*` / `PAYOUT_*`).
 
 Delivery is decoupled via NestJS `EventEmitter2` (`webhook.event`), so emitting a
 notification never blocks the API request that triggered it.
@@ -429,7 +435,7 @@ same `(consumer, source, network)` also returns **409** naming the existing id
 The signed transaction's hash is verified against the one the service built before
 it is broadcast, so a caller can never have the service relay an arbitrary
 transaction. A swap fires `SWAP_CREATED` / `SWAP_SUBMITTED` / `SWAP_SUCCEEDED` /
-`SWAP_FAILED` webhook events through the same dispatcher.
+`SWAP_FAILED` / `SWAP_EXPIRED` webhook events through the same dispatcher.
 
 ## BlindPay — onramp / offramp / KYC (fiat ⇄ stablecoin)
 

@@ -31,6 +31,14 @@ describe('LP operation state machine (issue #32)', () => {
     expect(canTransitionLp('SUCCEEDED', 'PENDING')).toBe(false);
   });
 
+  it('lets the observer rescue a false EXPIRED to SUCCEEDED or FAILED', () => {
+    expect(canTransitionLp('EXPIRED', 'SUCCEEDED')).toBe(true);
+    expect(canTransitionLp('EXPIRED', 'FAILED')).toBe(true);
+    expect(LP_CAN_SUCCEED_STATUSES).toEqual(
+      expect.arrayContaining(['PENDING', 'SUBMITTED', 'FAILED', 'EXPIRED']),
+    );
+  });
+
   it('lets on-chain success heal a false FAILED, but not the reverse', () => {
     expect(canTransitionLp('FAILED', 'SUCCEEDED')).toBe(true);
     expect(LP_CAN_SUCCEED_STATUSES).toEqual(

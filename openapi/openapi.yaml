@@ -3107,10 +3107,12 @@ components:
               - SWAP_SUBMITTED
               - SWAP_SUCCEEDED
               - SWAP_FAILED
+              - SWAP_EXPIRED
               - LIQUIDITY_CREATED
               - LIQUIDITY_SUBMITTED
               - LIQUIDITY_SUCCEEDED
               - LIQUIDITY_FAILED
+              - LIQUIDITY_EXPIRED
       required:
         - url
     WebhookEndpointWithSecretEntity:
@@ -3160,10 +3162,12 @@ components:
               - SWAP_SUBMITTED
               - SWAP_SUCCEEDED
               - SWAP_FAILED
+              - SWAP_EXPIRED
               - LIQUIDITY_CREATED
               - LIQUIDITY_SUBMITTED
               - LIQUIDITY_SUCCEEDED
               - LIQUIDITY_FAILED
+              - LIQUIDITY_EXPIRED
         createdAt:
           format: date-time
           type: string
@@ -3263,10 +3267,12 @@ components:
               - SWAP_SUBMITTED
               - SWAP_SUCCEEDED
               - SWAP_FAILED
+              - SWAP_EXPIRED
               - LIQUIDITY_CREATED
               - LIQUIDITY_SUBMITTED
               - LIQUIDITY_SUCCEEDED
               - LIQUIDITY_FAILED
+              - LIQUIDITY_EXPIRED
     WebhookDeletedEntity:
       type: object
       properties:
@@ -3326,10 +3332,12 @@ components:
             - SWAP_SUBMITTED
             - SWAP_SUCCEEDED
             - SWAP_FAILED
+            - SWAP_EXPIRED
             - LIQUIDITY_CREATED
             - LIQUIDITY_SUBMITTED
             - LIQUIDITY_SUCCEEDED
             - LIQUIDITY_FAILED
+            - LIQUIDITY_EXPIRED
           example: PAYMENT_INTENT_SUCCEEDED
         eventId:
           type: string
