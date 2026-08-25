@@ -7,8 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { AppConfig, StellarNetwork } from '../config/configuration';
 import { PrismaService } from '../prisma/prisma.service';
-import { armObserverWatchdog } from '../common/observer-watchdog';
-import { horizonHttpStatus, StellarService } from '../stellar/stellar.service';
+import { StellarService } from '../stellar/stellar.service';
 import { LiquidityPoolsService } from '../liquidity-pools/liquidity-pools.service';
 import { SwapsService } from '../swaps/swaps.service';
 import { nextExpiryStreak, shouldMarkExpired } from './settlement-expiry';
@@ -45,7 +44,6 @@ export class SettlementObserverService
   private readonly logger = new Logger(SettlementObserverService.name);
   private timer?: NodeJS.Timeout;
   private running = false;
-  private cycleGeneration = 0;
   private lastRescueAt = 0;
 
   constructor(
@@ -74,41 +72,10 @@ export class SettlementObserverService
     if (this.timer) clearInterval(this.timer);
   }
 
-  /** True while a reconciliation cycle is in flight. Exposed for tests. */
-  isRunning(): boolean {
-    return this.running;
-  }
-
-  /**
-   * One settlement cycle. `running` normally prevents overlap; the watchdog
-   * may still release it after 2× interval while a hung cycle is in flight,
-   * so two ticks can then hit the same rows. Finalize paths must stay
-   * idempotent (`applied` + quiet duplicate-hash helpers).
-   */
-  async tick(): Promise<void> {
-    if (this.running) return;
+  private async tick(): Promise<void> {
+    if (this.running) return; // never overlap cycles
     this.running = true;
-    const generation = ++this.cycleGeneration;
-    const { batchSize, intervalMs } = this.config.get('observer', {
-      infer: true,
-    });
-    const cancelWatchdog = armObserverWatchdog({
-      logger: this.logger,
-      name: 'Settlement observer',
-      observer: 'settlement',
-      stellar: this.stellar,
-      intervalMs,
-      generation,
-      currentGeneration: () => this.cycleGeneration,
-      setRunning: (value) => {
-        this.running = value;
-      },
-    });
-    const started = Date.now();
-    let reconciled = 0;
     try {
-      reconciled += await this.reconcileSwaps(batchSize);
-      reconciled += await this.reconcileLiquidity(batchSize);
       const { batchSize } = this.config.get('observer', { infer: true });
       await this.reconcileSwaps(batchSize);
       await this.reconcileLiquidity(batchSize);
@@ -116,26 +83,12 @@ export class SettlementObserverService
     } catch (err) {
       this.logger.error('Settlement observer cycle failed', err as Error);
     } finally {
-      cancelWatchdog();
-      const durationMs = Date.now() - started;
-      this.stellar.recordObserverCycle('settlement', {
-        durationMs,
-        reconciled,
-      });
-      const { horizonErrors, observers } = this.stellar.metrics();
-      this.logger.log(
-        `Settlement cycle complete cycles=${observers.settlement.cycles} ` +
-          `reconciled=${reconciled} durationMs=${durationMs} ` +
-          `horizonErrors=${JSON.stringify(horizonErrors)}`,
-      );
-      if (this.cycleGeneration === generation) {
-        this.running = false;
-      }
+      this.running = false;
     }
   }
 
   // ── Swaps ────────────────────────────────────────────────────────────────
-  private async reconcileSwaps(batchSize: number): Promise<number> {
+  private async reconcileSwaps(batchSize: number): Promise<void> {
     const rows = await this.prisma.swap.findMany({
       where: { status: { in: ['PENDING', 'SUBMITTED'] } },
       include: { consumer: true },
@@ -143,7 +96,6 @@ export class SettlementObserverService
       take: batchSize,
     });
     const now = new Date();
-    let reconciled = 0;
     const { expiryGraceMs } = this.config.get('observer', { infer: true });
 
     // One Horizon lookup per txHash. Historical duplicate hashes (pre-migration)
@@ -172,14 +124,12 @@ export class SettlementObserverService
               username,
             );
             if (applied) {
-              reconciled += 1;
               this.logger.log(`Reconciled swap ${row.id} → SUCCEEDED`);
             }
           } else {
             // Duplicate hash: settle the phantom row without a second webhook.
             const { applied } = await this.swaps.finalizeSucceededQuiet(row.id);
             if (applied) {
-              reconciled += 1;
               this.logger.log(
                 `Reconciled duplicate-hash swap ${row.id} → SUCCEEDED (no webhook)`,
               );
@@ -197,13 +147,11 @@ export class SettlementObserverService
               username,
             );
             if (applied) {
-              reconciled += 1;
               this.logger.warn(`Reconciled swap ${row.id} → FAILED`);
             }
           } else {
             const { applied } = await this.swaps.finalizeFailedQuiet(row.id);
             if (applied) {
-              reconciled += 1;
               this.logger.warn(
                 `Reconciled duplicate-hash swap ${row.id} → FAILED (no webhook)`,
               );
@@ -242,11 +190,10 @@ export class SettlementObserverService
         }
       }
     }
-    return reconciled;
   }
 
   // ── Liquidity pool operations ──────────────────────────────────────────────
-  private async reconcileLiquidity(batchSize: number): Promise<number> {
+  private async reconcileLiquidity(batchSize: number): Promise<void> {
     const rows = await this.prisma.liquidityPoolOperation.findMany({
       where: { status: { in: ['PENDING', 'SUBMITTED'] } },
       include: { consumer: true },
@@ -254,7 +201,6 @@ export class SettlementObserverService
       take: batchSize,
     });
     const now = new Date();
-    let reconciled = 0;
     const { expiryGraceMs } = this.config.get('observer', { infer: true });
     for (const row of rows) {
       const settlement = await this.settlementOf(row.network, row.txHash);
@@ -266,7 +212,6 @@ export class SettlementObserverService
         );
         await this.touchLpCheck(row.id, now, 0);
         if (applied) {
-          reconciled += 1;
           this.logger.log(`Reconciled LP operation ${row.id} → SUCCEEDED`);
         }
       } else if (settlement === 'failed') {
@@ -276,7 +221,6 @@ export class SettlementObserverService
         );
         await this.touchLpCheck(row.id, now, 0);
         if (applied) {
-          reconciled += 1;
           this.logger.warn(`Reconciled LP operation ${row.id} → FAILED`);
         }
       } else if (settlement === 'unknown') {
@@ -383,7 +327,6 @@ export class SettlementObserverService
         }
       }
     }
-    return reconciled;
   }
 
   private touchSwapCheck(
@@ -419,15 +362,6 @@ export class SettlementObserverService
     network: string,
     txHash: string,
   ): Promise<Settlement> {
-    try {
-      const tx = await this.stellar.call(network as StellarNetwork, (server) =>
-        server.transactions().transaction(txHash).call(),
-      );
-      return tx.successful ? 'succeeded' : 'failed';
-    } catch (err) {
-      if (horizonHttpStatus(err) === 404) return 'unsettled';
-      this.logger.warn(`Horizon lookup failed for tx ${txHash}`);
-      return 'unsettled';
     for (let attempt = 1; attempt <= HORIZON_LOOKUP_ATTEMPTS; attempt++) {
       try {
         const tx = await this.stellar
