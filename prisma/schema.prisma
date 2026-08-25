@@ -308,6 +308,21 @@ model PaymentIntentTransition {
   @@map("payment_intent_transition")
 }
 
+// Horizon paging cursor per (network, destination account). Lets
+// findMatchingPayment resume where the previous observer cycle left off
+// instead of re-scanning from the tip every time (issue #27).
+model HorizonAccountCursor {
+  id          String   @id @default(cuid())
+  network     String // 'public' | 'testnet'
+  account     String // G...
+  pagingToken String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([network, account])
+  @@map("horizon_account_cursor")
+}
+
 // ---------------------------------------------------------------------------
 // BlindPay (fiat <-> stablecoin rails): onramp / offramp / KYC.
 //
