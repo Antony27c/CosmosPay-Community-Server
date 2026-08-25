@@ -9,6 +9,7 @@ import {
   Query,
 } from '@nestjs/common';
 import {
+  ApiBody,
   ApiCreatedResponse,
   ApiOkResponse,
   ApiOperation,
@@ -101,6 +102,7 @@ export class WebhooksController {
     summary:
       'Rotate the signing secret (returns the new secret). The previous secret keeps signing deliveries until previousSecretExpiresAt, unless graceSeconds=0.',
   })
+  @ApiBody({ type: RotateWebhookSecretDto, required: false })
   @ApiCreatedResponse({ type: WebhookEndpointWithSecretEntity })
   rotateSecret(
     @CurrentConsumer() consumer: GatewayConsumer,

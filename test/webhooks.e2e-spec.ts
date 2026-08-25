@@ -232,6 +232,16 @@ describe('Webhooks CRUD (e2e)', () => {
     expect(v1s[1].slice(3)).toBe(signPayload(row.previousSecret, body, ts));
   });
 
+  it('second rotate within grace keeps the original previousSecret', async () => {
+    const originalPrevious = store.get(id).previousSecret;
+    const originalExpiry = store.get(id).previousSecretExpiresAt.getTime();
+    const intermediate = store.get(id).secret;
+    await gw(request(http()).post(`${route}/${id}/rotate-secret`)).expect(201);
+    expect(store.get(id).secret).not.toBe(intermediate);
+    expect(store.get(id).previousSecret).toBe(originalPrevious);
+    expect(store.get(id).previousSecretExpiresAt.getTime()).toBe(originalExpiry);
+  });
+
   it('rejects graceSeconds above the configured maximum (400)', async () => {
     const res = await gw(
       request(http())

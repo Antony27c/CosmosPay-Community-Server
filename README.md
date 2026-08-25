@@ -288,6 +288,11 @@ The current secret moves to an overlap window (default
    secret no longer verifies. The previous secret is then removed from the
    database.
 
+Rotating again **before** `previousSecretExpiresAt` does not replace the
+original previous secret. The new current secret is issued, but deliveries keep
+the original `v1=` overlap until that first expiry. Pass `{ "graceSeconds": 0 }`
+if you need to drop every prior secret immediately.
+
 If the old secret is a **confirmed leak**, pass `{ "graceSeconds": 0 }`. The
 next delivery is signed only with the new secret; the old one is revoked
 immediately (no overlap). Use this when a teammate leaves, an audit requires

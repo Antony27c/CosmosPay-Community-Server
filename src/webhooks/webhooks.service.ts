@@ -160,6 +160,10 @@ export class WebhooksService {
    * Rotates the signing secret. Returns the endpoint WITH the new secret
    * (never the previous one). The old secret keeps signing deliveries until
    * `previousSecretExpiresAt`, unless `graceSeconds=0` revokes it immediately.
+   *
+   * A second rotate while the grace window is still open keeps the original
+   * previous secret and its expiry. Overwriting it would drop the secret
+   * production handlers may still be verifying.
    */
   async rotateSecret(
     consumer: GatewayConsumer,
@@ -179,14 +183,25 @@ export class WebhooksService {
 
     const newSecret = this.generateSecret();
     const revokeImmediately = graceSeconds === 0;
+    const keepOriginalPrevious =
+      !revokeImmediately &&
+      current.previousSecret != null &&
+      current.previousSecretExpiresAt != null &&
+      current.previousSecretExpiresAt.getTime() > Date.now();
     const updated = await this.prisma.webhookEndpoint.update({
       where: { id },
       data: {
         secret: newSecret,
-        previousSecret: revokeImmediately ? null : current.secret,
+        previousSecret: revokeImmediately
+          ? null
+          : keepOriginalPrevious
+            ? current.previousSecret
+            : current.secret,
         previousSecretExpiresAt: revokeImmediately
           ? null
-          : new Date(Date.now() + graceSeconds * 1000),
+          : keepOriginalPrevious
+            ? current.previousSecretExpiresAt
+            : new Date(Date.now() + graceSeconds * 1000),
       },
     });
     this.logger.log(

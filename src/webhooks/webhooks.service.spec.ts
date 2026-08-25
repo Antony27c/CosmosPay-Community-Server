@@ -175,6 +175,75 @@ describe('WebhooksService secret rotation', () => {
     });
   });
 
+  it('graceSeconds=0 during an open grace window still drops the original secret', async () => {
+    const { service, prisma } = build();
+    prisma.webhookEndpoint.findFirst.mockResolvedValueOnce({
+      ...current,
+      secret: 'whsec_bbb',
+      previousSecret: 'whsec_aaa',
+      previousSecretExpiresAt: new Date(Date.now() + 86400 * 1000),
+    });
+
+    await service.rotateSecret(consumer, 'we_1', { graceSeconds: 0 });
+
+    expect(prisma.webhookEndpoint.update).toHaveBeenCalledWith({
+      where: { id: 'we_1' },
+      data: {
+        secret: expect.stringMatching(/^whsec_/),
+        previousSecret: null,
+        previousSecretExpiresAt: null,
+      },
+    });
+  });
+
+  it('second rotation within grace keeps the original previousSecret', async () => {
+    const originalExpiry = new Date(Date.now() + 86400 * 1000);
+    const { service, prisma } = build();
+    prisma.webhookEndpoint.findFirst.mockResolvedValueOnce({
+      ...current,
+      secret: 'whsec_bbb',
+      previousSecret: 'whsec_aaa',
+      previousSecretExpiresAt: originalExpiry,
+    });
+
+    const rotated = await service.rotateSecret(consumer, 'we_1', {});
+
+    expect(rotated.secret).not.toBe('whsec_bbb');
+    expect(prisma.webhookEndpoint.update).toHaveBeenCalledWith({
+      where: { id: 'we_1' },
+      data: {
+        secret: rotated.secret,
+        previousSecret: 'whsec_aaa',
+        previousSecretExpiresAt: originalExpiry,
+      },
+    });
+  });
+
+  it('rotation after the grace window expires promotes the current secret', async () => {
+    const { service, prisma } = build();
+    prisma.webhookEndpoint.findFirst.mockResolvedValueOnce({
+      ...current,
+      secret: 'whsec_bbb',
+      previousSecret: 'whsec_aaa',
+      previousSecretExpiresAt: new Date(Date.now() - 1000),
+    });
+
+    const before = Date.now();
+    const rotated = await service.rotateSecret(consumer, 'we_1', {});
+
+    expect(prisma.webhookEndpoint.update).toHaveBeenCalledWith({
+      where: { id: 'we_1' },
+      data: {
+        secret: rotated.secret,
+        previousSecret: 'whsec_bbb',
+        previousSecretExpiresAt: rotated.previousSecretExpiresAt,
+      },
+    });
+    expect(rotated.previousSecretExpiresAt!.getTime()).toBeGreaterThanOrEqual(
+      before + 86400 * 1000 - 50,
+    );
+  });
+
   it('rejects graceSeconds above the configured maximum with 400', async () => {
     const { service, prisma } = build(3600);
     await expect(
