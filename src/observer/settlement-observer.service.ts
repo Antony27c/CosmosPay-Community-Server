@@ -16,9 +16,6 @@ import { nextExpiryStreak, shouldMarkExpired } from './settlement-expiry';
 /** On-chain settlement of a stored transaction, keyed by its hash. */
 type Settlement = 'succeeded' | 'failed' | 'not_found' | 'unknown';
 
-/** Horizon lookups per `settlementOf` call (initial + retries on 429/5xx). */
-export const HORIZON_LOOKUP_ATTEMPTS = 3;
-const HORIZON_RETRY_BACKOFF_MS = 200;
 const RESCUE_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 const RESCUE_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -109,9 +106,6 @@ export class SettlementObserverService
     try {
       reconciled += await this.reconcileSwaps(batchSize);
       reconciled += await this.reconcileLiquidity(batchSize);
-      const { batchSize } = this.config.get('observer', { infer: true });
-      await this.reconcileSwaps(batchSize);
-      await this.reconcileLiquidity(batchSize);
       await this.maybeRescueExpired(batchSize);
     } catch (err) {
       this.logger.error('Settlement observer cycle failed', err as Error);
@@ -306,6 +300,7 @@ export class SettlementObserverService
         }
       }
     }
+    return reconciled;
   }
 
   /**
@@ -383,7 +378,6 @@ export class SettlementObserverService
         }
       }
     }
-    return reconciled;
   }
 
   private touchSwapCheck(
@@ -409,11 +403,9 @@ export class SettlementObserverService
   }
 
   /**
-   * Looks a transaction up by its deterministic hash on Horizon. Because signing
-   * does not change the hash, a customer who signs and broadcasts the tx
-   * themselves (bypassing our submit endpoint) still settles under this hash. A
-   * 404 means it is not on-chain (`not_found`); 429/5xx are retried then reported
-   * as `unknown` so we never expire on a Horizon blip.
+   * Timeout/retry live in {@link StellarService.call}. This method only maps
+   * the outcome: 404 → `not_found` (expiry streak), other failures → `unknown`
+   * (do not expire on a Horizon blip).
    */
   private async settlementOf(
     network: string,
@@ -425,63 +417,16 @@ export class SettlementObserverService
       );
       return tx.successful ? 'succeeded' : 'failed';
     } catch (err) {
-      if (horizonHttpStatus(err) === 404) return 'unsettled';
-      this.logger.warn(`Horizon lookup failed for tx ${txHash}`);
-      return 'unsettled';
-    for (let attempt = 1; attempt <= HORIZON_LOOKUP_ATTEMPTS; attempt++) {
-      try {
-        const tx = await this.stellar
-          .server(network as StellarNetwork)
-          .transactions()
-          .transaction(txHash)
-          .call();
-        return tx.successful ? 'succeeded' : 'failed';
-      } catch (err) {
-        const status = horizonStatus(err);
-        const message = horizonMessage(err);
-        if (status === 404) {
-          this.logger.log(`Horizon tx ${txHash} → not_found`);
-          return 'not_found';
-        }
-        this.logger.warn(
-          `Horizon lookup failed for tx ${txHash} (status=${status ?? 'none'}, ${message}) → unknown`,
-        );
-        const retryable = isRetryableHorizonStatus(status);
-        if (retryable && attempt < HORIZON_LOOKUP_ATTEMPTS) {
-          await wait(HORIZON_RETRY_BACKOFF_MS * 2 ** (attempt - 1));
-          continue;
-        }
-        return 'unknown';
+      const status = horizonHttpStatus(err);
+      if (status === 404) {
+        this.logger.log(`Horizon tx ${txHash} → not_found`);
+        return 'not_found';
       }
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(
+        `Horizon lookup failed for tx ${txHash} (status=${status ?? 'none'}, ${message}) → unknown`,
+      );
+      return 'unknown';
     }
-    return 'unknown';
   }
-}
-
-function horizonStatus(err: unknown): number | undefined {
-  if (typeof err !== 'object' || err === null) return undefined;
-  const response = (err as { response?: { status?: unknown } }).response;
-  return typeof response?.status === 'number' ? response.status : undefined;
-}
-
-function horizonMessage(err: unknown): string {
-  if (err instanceof Error && err.message) return err.message;
-  if (typeof err === 'object' && err !== null && 'message' in err) {
-    const message = (err as { message: unknown }).message;
-    if (typeof message === 'string' && message.length > 0) return message;
-  }
-  return String(err);
-}
-
-function isRetryableHorizonStatus(status: number | undefined): boolean {
-  return (
-    status === 429 ||
-    (status !== undefined && status >= 500 && status <= 599)
-  );
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }
