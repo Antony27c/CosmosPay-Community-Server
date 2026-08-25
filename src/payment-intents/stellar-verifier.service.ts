@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Horizon } from '@stellar/stellar-sdk';
 import { horizonHttpStatus, StellarService } from '../stellar/stellar.service';
+import { PrismaService } from '../prisma/prisma.service';
 import type { PaymentIntent } from '../../generated/prisma/client';
 import type { StellarNetwork } from '../config/configuration';
 
@@ -12,6 +13,9 @@ export interface VerificationResult {
   payer?: string;
 }
 
+const DEFAULT_PAGE_SIZE = 200;
+const MAX_PAGES = 50;
+
 /**
  * Confirms that an on-chain Stellar transaction actually fulfills a payment
  * intent: it must be successful, contain a payment to the intent's destination
@@ -22,7 +26,10 @@ export interface VerificationResult {
  */
 @Injectable()
 export class StellarVerifierService {
-  constructor(private readonly stellar: StellarService) {}
+  constructor(
+    private readonly stellar: StellarService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   private network(intent: PaymentIntent): StellarNetwork {
     return intent.network as StellarNetwork;
@@ -74,25 +81,71 @@ export class StellarVerifierService {
   }
 
   /**
-   * Scans recent payments to the intent's destination and returns the hash of
-   * the first transaction that fully matches (used by the observer when no hash
+   * Scans payments to the intent's destination and returns the hash of the
+   * first transaction that fully matches (used by the observer when no hash
    * was reported by the integrator).
+   *
+   * - Payments with `created_at` before `intent.createdAt` never credit.
+   * - With a persisted Horizon cursor (per intent), scans ascending from that
+   *   token so co-located intents on the same destination cannot consume each
+   *   other's matching payments.
+   * - Without a cursor (cold start), scans descending from the tip until
+   *   past `intent.createdAt`, paginating so matches beyond a single page
+   *   are not lost.
+   * - The paging token is upserted so the next cycle resumes where this
+   *   one left off (issue #27).
    */
   async findMatchingPayment(
     intent: PaymentIntent,
-    limit = 50,
+    pageSize = DEFAULT_PAGE_SIZE,
   ): Promise<VerificationResult> {
     const network = this.network(intent);
-    let page: Horizon.ServerApi.CollectionPage<Horizon.ServerApi.OperationRecord>;
+    const saved = await this.loadCursor(intent.id);
+    const order: 'asc' | 'desc' = saved ? 'asc' : 'desc';
+    let cursor: string | undefined = saved?.pagingToken;
+    let lastToken: string | undefined = cursor;
+    let matched: VerificationResult | undefined;
+
     try {
-      page = await this.stellar.call(network, (server) =>
-        server
-          .payments()
-          .forAccount(intent.destination)
-          .order('desc')
-          .limit(limit)
-          .call(),
-      );
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const records = await this.fetchPaymentPage(
+          network,
+          intent.destination,
+          order,
+          pageSize,
+          cursor,
+        );
+        if (records.length === 0) {
+          break;
+        }
+
+        let hitTimeFloor = false;
+        for (const op of records) {
+          lastToken = op.paging_token;
+
+          if (this.opCreatedAt(op) < intent.createdAt.getTime()) {
+            if (order === 'desc') {
+              hitTimeFloor = true;
+              break;
+            }
+            continue;
+          }
+
+          const result = await this.tryMatchOp(intent, network, op);
+          if (result) {
+            matched = result;
+            break;
+          }
+        }
+
+        if (matched || hitTimeFloor) {
+          break;
+        }
+        if (records.length < pageSize) {
+          break;
+        }
+        cursor = records[records.length - 1].paging_token;
+      }
     } catch (err) {
       if (horizonHttpStatus(err) === 404) {
         return { valid: false, reason: 'Destination account not found' };
@@ -100,25 +153,84 @@ export class StellarVerifierService {
       throw err;
     }
 
-    for (const op of page.records) {
-      if (!this.paymentMatches(intent, op)) {
-        continue;
-      }
-      // Confirm success + memo on the owning transaction.
-      const tx = await this.stellar.call(network, (server) =>
-        server.transactions().transaction(op.transaction_hash).call(),
-      );
-      if (!tx.successful) {
-        continue;
-      }
-      if (!this.memoMatches(intent, tx.memo_type, tx.memo).ok) {
-        continue;
-      }
-      const payer = (op as Horizon.ServerApi.PaymentOperationRecord).from;
-      return { valid: true, txHash: op.transaction_hash, payer };
+    if (lastToken && lastToken !== saved?.pagingToken) {
+      await this.saveCursor(intent, lastToken);
     }
 
-    return { valid: false, reason: 'No matching payment found yet' };
+    return (
+      matched ?? { valid: false, reason: 'No matching payment found yet' }
+    );
+  }
+
+  private async fetchPaymentPage(
+    network: StellarNetwork,
+    account: string,
+    order: 'asc' | 'desc',
+    pageSize: number,
+    cursor?: string,
+  ): Promise<Horizon.ServerApi.OperationRecord[]> {
+    const page = await this.stellar.call(network, (server) => {
+      let builder = server
+        .payments()
+        .forAccount(account)
+        .order(order)
+        .limit(pageSize);
+      if (cursor) {
+        builder = builder.cursor(cursor);
+      }
+      return builder.call();
+    });
+    return page.records;
+  }
+
+  private async tryMatchOp(
+    intent: PaymentIntent,
+    network: StellarNetwork,
+    op: Horizon.ServerApi.OperationRecord,
+  ): Promise<VerificationResult | undefined> {
+    if (!this.paymentMatches(intent, op)) {
+      return undefined;
+    }
+    const tx = await this.stellar.call(network, (server) =>
+      server.transactions().transaction(op.transaction_hash).call(),
+    );
+    if (!tx.successful) {
+      return undefined;
+    }
+    if (!this.memoMatches(intent, tx.memo_type, tx.memo).ok) {
+      return undefined;
+    }
+    const payer = (op as Horizon.ServerApi.PaymentOperationRecord).from;
+    return { valid: true, txHash: op.transaction_hash, payer };
+  }
+
+  private opCreatedAt(op: Horizon.ServerApi.OperationRecord): number {
+    return new Date(op.created_at).getTime();
+  }
+
+  private async loadCursor(
+    intentId: string,
+  ): Promise<{ pagingToken: string } | null> {
+    return this.prisma.horizonAccountCursor.findUnique({
+      where: { intentId },
+      select: { pagingToken: true },
+    });
+  }
+
+  private async saveCursor(
+    intent: PaymentIntent,
+    pagingToken: string,
+  ): Promise<void> {
+    await this.prisma.horizonAccountCursor.upsert({
+      where: { intentId: intent.id },
+      create: {
+        intentId: intent.id,
+        network: this.network(intent),
+        account: intent.destination,
+        pagingToken,
+      },
+      update: { pagingToken },
+    });
   }
 
   /**

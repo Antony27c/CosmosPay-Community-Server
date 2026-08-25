@@ -1,6 +1,6 @@
-import { Horizon, Networks } from '@stellar/stellar-sdk';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Networks } from '@stellar/stellar-sdk';
 import { AppConfig } from '../config/configuration';
 import { LiquidityPoolsService } from '../liquidity-pools/liquidity-pools.service';
 import {
@@ -16,105 +16,10 @@ import {
   nextExpiryStreak,
   shouldMarkExpired,
 } from './settlement-expiry';
-import { SettlementObserverService } from './settlement-observer.service';
-
-function never(): Promise<never> {
-  return new Promise(() => {});
-}
-
-describe('SettlementObserverService.tick timeout', () => {
-  afterEach(() => {
-    jest.clearAllTimers();
-    jest.useRealTimers();
-    jest.restoreAllMocks();
-  });
-
-  it('a Horizon that never responds finishes within the timeout and the next cycle runs', async () => {
-    const httpTimeoutMs = 50;
-    const timeoutStellarCfg = {
-      horizon: {
-        public: 'https://horizon.test',
-        testnet: 'https://horizon.test',
-      },
-      httpTimeoutMs,
-      maxAttempts: 1,
-      retryBaseMs: 1,
-    };
-    const timeoutObserverCfg = {
-      enabled: false,
-      intervalMs: 10_000,
-      batchSize: 50,
-      expiryGraceMs: 60_000,
-    };
-    const config = {
-      get: (key: string) =>
-        key === 'observer' ? timeoutObserverCfg : timeoutStellarCfg,
-    } as any;
-
-    const swap = {
-      id: 'sw_1',
-      status: 'PENDING',
-      txHash: 'b'.repeat(64),
-      network: 'testnet',
-      expiresAt: new Date('2099-01-01T00:00:00.000Z'),
-      consumer: { apisixUsername: 'cosmos_u1' },
-    };
-    const prisma = {
-      swap: {
-        findMany: jest.fn(async (args?: { where?: { status?: unknown } }) => {
-          if (args?.where?.status === 'EXPIRED') return [];
-          return [swap];
-        }),
-        update: jest.fn(async () => swap),
-      },
-      liquidityPoolOperation: {
-        findMany: jest.fn(async () => []),
-        update: jest.fn(),
-      },
-    };
-    const stellar = new StellarService(config);
-    const swaps = {
-      finalizeSucceeded: jest.fn(),
-      finalizeFailed: jest.fn(),
-      finalizeExpired: jest.fn(),
-    };
-    const liquidity = {
-      finalizeSucceeded: jest.fn(),
-      finalizeFailed: jest.fn(),
-      finalizeExpired: jest.fn(),
-    };
-    const observer = new SettlementObserverService(
-      config,
-      prisma as any,
-      stellar,
-      liquidity as any,
-      swaps as any,
-    );
-
-    jest.spyOn(Horizon.Server.prototype, 'transactions').mockReturnValue({
-      transaction: () => ({ call: () => never() }),
-    } as any);
-    jest.useFakeTimers();
-
-    const first = observer.tick();
-    await jest.advanceTimersByTimeAsync(httpTimeoutMs);
-    await first;
-
-    expect(observer.isRunning()).toBe(false);
-    expect(swaps.finalizeSucceeded).not.toHaveBeenCalled();
-    const findsAfterFirst = prisma.swap.findMany.mock.calls.length;
-    expect(findsAfterFirst).toBeGreaterThanOrEqual(1);
-
-    const second = observer.tick();
-    await jest.advanceTimersByTimeAsync(httpTimeoutMs);
-    await second;
-
-    expect(observer.isRunning()).toBe(false);
-    expect(prisma.swap.findMany.mock.calls.length).toBeGreaterThan(
-      findsAfterFirst,
-    );
-  });
-});
+import {
+  HORIZON_LOOKUP_ATTEMPTS,
+  SettlementObserverService,
+} from './settlement-observer.service';
 
 const USERNAME = 'cosmos_u1';
 const TX_HASH = 'a'.repeat(64);
@@ -201,49 +106,24 @@ describe('SettlementObserverService', () => {
     jest.restoreAllMocks();
   });
 
-  function emptyObserverStats() {
-    return {
-      cycles: 0,
-      reconciled: 0,
-      lastDurationMs: 0,
-      watchdogTrips: 0,
-    };
-  }
-
-  function buildHorizon(horizonTxCall: jest.Mock) {
-    const fakeServer = {
-      transactions: () => ({
-        transaction: () => ({ call: horizonTxCall }),
-      }),
-      effects: () => ({
-        forTransaction: () => ({
-          call: jest.fn().mockResolvedValue({ records: [] }),
-        }),
-      }),
-      liquidityPools: () => ({
-        liquidityPoolId: () => ({
-          call: jest.fn().mockResolvedValue(null),
-        }),
-      }),
-      loadAccount: jest.fn(),
-    };
+  function buildHorizon(call: jest.Mock) {
     return {
       passphrase: () => Networks.TESTNET,
-      call: jest.fn(
-        async (
-          _network: string,
-          fn: (server: typeof fakeServer) => Promise<unknown>,
-        ) => fn(fakeServer),
-      ),
-      server: jest.fn().mockReturnValue(fakeServer),
-      recordObserverCycle: jest.fn(),
-      recordWatchdogTrip: jest.fn(),
-      metrics: () => ({
-        horizonErrors: {},
-        observers: {
-          settlement: emptyObserverStats(),
-          'payment-intents': emptyObserverStats(),
-        },
+      server: jest.fn().mockReturnValue({
+        transactions: () => ({
+          transaction: () => ({ call }),
+        }),
+        effects: () => ({
+          forTransaction: () => ({
+            call: jest.fn().mockResolvedValue({ records: [] }),
+          }),
+        }),
+        liquidityPools: () => ({
+          liquidityPoolId: () => ({
+            call: jest.fn().mockResolvedValue(null),
+          }),
+        }),
+        loadAccount: jest.fn(),
       }),
     };
   }
@@ -386,7 +266,9 @@ describe('SettlementObserverService', () => {
   }
 
   async function runTick(service: SettlementObserverService): Promise<void> {
-    await internals(service).tick();
+    const done = internals(service).tick();
+    await jest.runAllTimersAsync();
+    await done;
   }
 
   function pendingSwap(overrides: Record<string, unknown> = {}) {
@@ -418,7 +300,7 @@ describe('SettlementObserverService', () => {
     expect(swapRowStore.current?.status).toBe('PENDING');
     expect(swaps.finalizeExpired).not.toHaveBeenCalled();
     expect(swaps.finalizeSucceeded).not.toHaveBeenCalled();
-    expect(call).toHaveBeenCalledTimes(1);
+    expect(call).toHaveBeenCalledTimes(HORIZON_LOOKUP_ATTEMPTS);
     expect(warn.mock.calls.flat().join(' ')).toMatch(/status=503/);
     expect(warn.mock.calls.flat().join(' ')).toMatch(/unknown/);
     expect(log.mock.calls.flat().join(' ')).not.toMatch(/→ not_found/);
@@ -451,7 +333,7 @@ describe('SettlementObserverService', () => {
 
     await runTick(service);
 
-    expect(call).toHaveBeenCalledTimes(1);
+    expect(call).toHaveBeenCalledTimes(HORIZON_LOOKUP_ATTEMPTS);
     expect(swapRowStore.current?.status).toBe('PENDING');
   });
 

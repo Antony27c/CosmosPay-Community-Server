@@ -7,8 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { AppConfig, StellarNetwork } from '../config/configuration';
 import { PrismaService } from '../prisma/prisma.service';
-import { armObserverWatchdog } from '../common/observer-watchdog';
-import { horizonHttpStatus, StellarService } from '../stellar/stellar.service';
+import { StellarService } from '../stellar/stellar.service';
 import { LiquidityPoolsService } from '../liquidity-pools/liquidity-pools.service';
 import { SwapsService } from '../swaps/swaps.service';
 import { nextExpiryStreak, shouldMarkExpired } from './settlement-expiry';
@@ -16,6 +15,9 @@ import { nextExpiryStreak, shouldMarkExpired } from './settlement-expiry';
 /** On-chain settlement of a stored transaction, keyed by its hash. */
 type Settlement = 'succeeded' | 'failed' | 'not_found' | 'unknown';
 
+/** Horizon lookups per `settlementOf` call (initial + retries on 429/5xx). */
+export const HORIZON_LOOKUP_ATTEMPTS = 3;
+const HORIZON_RETRY_BACKOFF_MS = 200;
 const RESCUE_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 const RESCUE_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -42,7 +44,6 @@ export class SettlementObserverService
   private readonly logger = new Logger(SettlementObserverService.name);
   private timer?: NodeJS.Timeout;
   private running = false;
-  private cycleGeneration = 0;
   private lastRescueAt = 0;
 
   constructor(
@@ -71,65 +72,23 @@ export class SettlementObserverService
     if (this.timer) clearInterval(this.timer);
   }
 
-  /** True while a reconciliation cycle is in flight. Exposed for tests. */
-  isRunning(): boolean {
-    return this.running;
-  }
-
-  /**
-   * One settlement cycle. `running` normally prevents overlap; the watchdog
-   * may still release it after 2× interval while a hung cycle is in flight,
-   * so two ticks can then hit the same rows. Finalize paths must stay
-   * idempotent (`applied` + quiet duplicate-hash helpers).
-   */
-  async tick(): Promise<void> {
-    if (this.running) return;
+  private async tick(): Promise<void> {
+    if (this.running) return; // never overlap cycles
     this.running = true;
-    const generation = ++this.cycleGeneration;
-    const { batchSize, intervalMs } = this.config.get('observer', {
-      infer: true,
-    });
-    const cancelWatchdog = armObserverWatchdog({
-      logger: this.logger,
-      name: 'Settlement observer',
-      observer: 'settlement',
-      stellar: this.stellar,
-      intervalMs,
-      generation,
-      currentGeneration: () => this.cycleGeneration,
-      setRunning: (value) => {
-        this.running = value;
-      },
-    });
-    const started = Date.now();
-    let reconciled = 0;
     try {
-      reconciled += await this.reconcileSwaps(batchSize);
-      reconciled += await this.reconcileLiquidity(batchSize);
+      const { batchSize } = this.config.get('observer', { infer: true });
+      await this.reconcileSwaps(batchSize);
+      await this.reconcileLiquidity(batchSize);
       await this.maybeRescueExpired(batchSize);
     } catch (err) {
       this.logger.error('Settlement observer cycle failed', err as Error);
     } finally {
-      cancelWatchdog();
-      const durationMs = Date.now() - started;
-      this.stellar.recordObserverCycle('settlement', {
-        durationMs,
-        reconciled,
-      });
-      const { horizonErrors, observers } = this.stellar.metrics();
-      this.logger.log(
-        `Settlement cycle complete cycles=${observers.settlement.cycles} ` +
-          `reconciled=${reconciled} durationMs=${durationMs} ` +
-          `horizonErrors=${JSON.stringify(horizonErrors)}`,
-      );
-      if (this.cycleGeneration === generation) {
-        this.running = false;
-      }
+      this.running = false;
     }
   }
 
   // ── Swaps ────────────────────────────────────────────────────────────────
-  private async reconcileSwaps(batchSize: number): Promise<number> {
+  private async reconcileSwaps(batchSize: number): Promise<void> {
     const rows = await this.prisma.swap.findMany({
       where: { status: { in: ['PENDING', 'SUBMITTED'] } },
       include: { consumer: true },
@@ -137,7 +96,6 @@ export class SettlementObserverService
       take: batchSize,
     });
     const now = new Date();
-    let reconciled = 0;
     const { expiryGraceMs } = this.config.get('observer', { infer: true });
 
     // One Horizon lookup per txHash. Historical duplicate hashes (pre-migration)
@@ -166,14 +124,12 @@ export class SettlementObserverService
               username,
             );
             if (applied) {
-              reconciled += 1;
               this.logger.log(`Reconciled swap ${row.id} → SUCCEEDED`);
             }
           } else {
             // Duplicate hash: settle the phantom row without a second webhook.
             const { applied } = await this.swaps.finalizeSucceededQuiet(row.id);
             if (applied) {
-              reconciled += 1;
               this.logger.log(
                 `Reconciled duplicate-hash swap ${row.id} → SUCCEEDED (no webhook)`,
               );
@@ -191,13 +147,11 @@ export class SettlementObserverService
               username,
             );
             if (applied) {
-              reconciled += 1;
               this.logger.warn(`Reconciled swap ${row.id} → FAILED`);
             }
           } else {
             const { applied } = await this.swaps.finalizeFailedQuiet(row.id);
             if (applied) {
-              reconciled += 1;
               this.logger.warn(
                 `Reconciled duplicate-hash swap ${row.id} → FAILED (no webhook)`,
               );
@@ -236,11 +190,10 @@ export class SettlementObserverService
         }
       }
     }
-    return reconciled;
   }
 
   // ── Liquidity pool operations ──────────────────────────────────────────────
-  private async reconcileLiquidity(batchSize: number): Promise<number> {
+  private async reconcileLiquidity(batchSize: number): Promise<void> {
     const rows = await this.prisma.liquidityPoolOperation.findMany({
       where: { status: { in: ['PENDING', 'SUBMITTED'] } },
       include: { consumer: true },
@@ -248,7 +201,6 @@ export class SettlementObserverService
       take: batchSize,
     });
     const now = new Date();
-    let reconciled = 0;
     const { expiryGraceMs } = this.config.get('observer', { infer: true });
     for (const row of rows) {
       const settlement = await this.settlementOf(row.network, row.txHash);
@@ -260,7 +212,6 @@ export class SettlementObserverService
         );
         await this.touchLpCheck(row.id, now, 0);
         if (applied) {
-          reconciled += 1;
           this.logger.log(`Reconciled LP operation ${row.id} → SUCCEEDED`);
         }
       } else if (settlement === 'failed') {
@@ -270,7 +221,6 @@ export class SettlementObserverService
         );
         await this.touchLpCheck(row.id, now, 0);
         if (applied) {
-          reconciled += 1;
           this.logger.warn(`Reconciled LP operation ${row.id} → FAILED`);
         }
       } else if (settlement === 'unknown') {
@@ -300,7 +250,6 @@ export class SettlementObserverService
         }
       }
     }
-    return reconciled;
   }
 
   /**
@@ -403,30 +352,70 @@ export class SettlementObserverService
   }
 
   /**
-   * Timeout/retry live in {@link StellarService.call}. This method only maps
-   * the outcome: 404 → `not_found` (expiry streak), other failures → `unknown`
-   * (do not expire on a Horizon blip).
+   * Looks a transaction up by its deterministic hash on Horizon. Because signing
+   * does not change the hash, a customer who signs and broadcasts the tx
+   * themselves (bypassing our submit endpoint) still settles under this hash. A
+   * 404 means it is not on-chain (`not_found`); 429/5xx are retried then reported
+   * as `unknown` so we never expire on a Horizon blip.
    */
   private async settlementOf(
     network: string,
     txHash: string,
   ): Promise<Settlement> {
-    try {
-      const tx = await this.stellar.call(network as StellarNetwork, (server) =>
-        server.transactions().transaction(txHash).call(),
-      );
-      return tx.successful ? 'succeeded' : 'failed';
-    } catch (err) {
-      const status = horizonHttpStatus(err);
-      if (status === 404) {
-        this.logger.log(`Horizon tx ${txHash} → not_found`);
-        return 'not_found';
+    for (let attempt = 1; attempt <= HORIZON_LOOKUP_ATTEMPTS; attempt++) {
+      try {
+        const tx = await this.stellar
+          .server(network as StellarNetwork)
+          .transactions()
+          .transaction(txHash)
+          .call();
+        return tx.successful ? 'succeeded' : 'failed';
+      } catch (err) {
+        const status = horizonStatus(err);
+        const message = horizonMessage(err);
+        if (status === 404) {
+          this.logger.log(`Horizon tx ${txHash} → not_found`);
+          return 'not_found';
+        }
+        this.logger.warn(
+          `Horizon lookup failed for tx ${txHash} (status=${status ?? 'none'}, ${message}) → unknown`,
+        );
+        const retryable = isRetryableHorizonStatus(status);
+        if (retryable && attempt < HORIZON_LOOKUP_ATTEMPTS) {
+          await wait(HORIZON_RETRY_BACKOFF_MS * 2 ** (attempt - 1));
+          continue;
+        }
+        return 'unknown';
       }
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.warn(
-        `Horizon lookup failed for tx ${txHash} (status=${status ?? 'none'}, ${message}) → unknown`,
-      );
-      return 'unknown';
     }
+    return 'unknown';
   }
+}
+
+function horizonStatus(err: unknown): number | undefined {
+  if (typeof err !== 'object' || err === null) return undefined;
+  const response = (err as { response?: { status?: unknown } }).response;
+  return typeof response?.status === 'number' ? response.status : undefined;
+}
+
+function horizonMessage(err: unknown): string {
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === 'object' && err !== null && 'message' in err) {
+    const message = (err as { message: unknown }).message;
+    if (typeof message === 'string' && message.length > 0) return message;
+  }
+  return String(err);
+}
+
+function isRetryableHorizonStatus(status: number | undefined): boolean {
+  return (
+    status === 429 ||
+    (status !== undefined && status >= 500 && status <= 599)
+  );
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }

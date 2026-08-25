@@ -90,7 +90,12 @@ describe('POST /v1/payment-intents/:id/validate Horizon errors', () => {
           ),
         ),
     };
-    const verifier = new StellarVerifierService(stellar as any);
+    const verifier = new StellarVerifierService(stellar as any, {
+      horizonAccountCursor: {
+        findUnique: jest.fn(),
+        upsert: jest.fn(),
+      },
+    } as any);
     const intent = {
       id: 'pi_1',
       network: 'testnet',
