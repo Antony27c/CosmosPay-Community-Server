@@ -1208,6 +1208,16 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RotateWebhookSecretDto"
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
             "description": "",
@@ -1220,7 +1230,7 @@
             }
           }
         },
-        "summary": "Rotate the signing secret (returns the new secret)",
+        "summary": "Rotate the signing secret (returns the new secret). The previous secret keeps signing deliveries until previousSecretExpiresAt, unless graceSeconds=0.",
         "tags": [
           "webhooks"
         ]
@@ -4605,6 +4615,13 @@
               ]
             }
           },
+          "previousSecretExpiresAt": {
+            "type": "string",
+            "nullable": true,
+            "format": "date-time",
+            "example": "2026-08-26T17:00:00.000Z",
+            "description": "When the previous signing secret stops being accepted on deliveries. Null when no rotation is in flight. The previous secret value itself is never returned."
+          },
           "createdAt": {
             "format": "date-time",
             "type": "string",
@@ -4628,6 +4645,7 @@
           "enabled",
           "destinationBlocked",
           "eventTypes",
+          "previousSecretExpiresAt",
           "createdAt",
           "updatedAt",
           "secret"
@@ -4693,6 +4711,13 @@
               ]
             }
           },
+          "previousSecretExpiresAt": {
+            "type": "string",
+            "nullable": true,
+            "format": "date-time",
+            "example": "2026-08-26T17:00:00.000Z",
+            "description": "When the previous signing secret stops being accepted on deliveries. Null when no rotation is in flight. The previous secret value itself is never returned."
+          },
           "createdAt": {
             "format": "date-time",
             "type": "string",
@@ -4711,6 +4736,7 @@
           "enabled",
           "destinationBlocked",
           "eventTypes",
+          "previousSecretExpiresAt",
           "createdAt",
           "updatedAt"
         ]
@@ -4778,6 +4804,17 @@
           "id",
           "deleted"
         ]
+      },
+      "RotateWebhookSecretDto": {
+        "type": "object",
+        "properties": {
+          "graceSeconds": {
+            "type": "number",
+            "description": "Overlap window in seconds during which deliveries are signed with both the new and previous secrets. Defaults to WEBHOOK_SECRET_GRACE_SECONDS. Pass 0 to revoke the previous secret immediately (confirmed leak). Cannot exceed the configured maximum.",
+            "example": 86400,
+            "minimum": 0
+          }
+        }
       },
       "WebhookPingEntity": {
         "type": "object",

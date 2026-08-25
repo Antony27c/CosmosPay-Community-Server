@@ -8,7 +8,8 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { WebhookDestinationGuard } from '../src/webhooks/webhook-destination.guard';
-
+import { WebhookSecretCleanupService } from '../src/webhooks/webhook-secret-cleanup.service';
+import { signPayload } from '../src/webhooks/webhook-signature';
 
 /**
  * Full CRUD for webhook endpoints behind the APISIX gate. Prisma is mocked with
@@ -55,6 +56,22 @@ describe('Webhooks CRUD (e2e)', () => {
         const row = { ...store.get(where.id), ...data, updatedAt: new Date() };
         store.set(where.id, row);
         return Promise.resolve(row);
+      }),
+      updateMany: jest.fn(({ where, data }: any) => {
+        const cutoff = where?.previousSecretExpiresAt?.lte as Date | undefined;
+        let count = 0;
+        for (const [id, row] of store.entries()) {
+          const hasPrev = row.previousSecret != null;
+          const expired =
+            cutoff instanceof Date &&
+            row.previousSecretExpiresAt instanceof Date &&
+            row.previousSecretExpiresAt <= cutoff;
+          if (hasPrev && expired) {
+            store.set(id, { ...row, ...data });
+            count += 1;
+          }
+        }
+        return Promise.resolve({ count });
       }),
       delete: jest.fn(({ where }: any) => {
         const row = store.get(where.id);
@@ -154,9 +171,11 @@ describe('Webhooks CRUD (e2e)', () => {
   it('list/get never expose the secret', async () => {
     const list = await gw(request(http()).get(route)).expect(200);
     expect(list.body[0].secret).toBeUndefined();
+    expect(list.body[0].previousSecret).toBeUndefined();
     const one = await gw(request(http()).get(`${route}/${id}`)).expect(200);
     expect(one.body.id).toBe(id);
     expect(one.body.secret).toBeUndefined();
+    expect(one.body.previousSecret).toBeUndefined();
   });
 
   it('updates (pause) an endpoint (200)', async () => {
@@ -166,24 +185,106 @@ describe('Webhooks CRUD (e2e)', () => {
     expect(res.body.enabled).toBe(false);
   });
 
-  it('rotates the secret (200) returning a new secret', async () => {
+  it('rotates the secret (201) returning a new secret and previousSecretExpiresAt', async () => {
+    const oldSecret = store.get(id).secret;
     const res = await gw(
       request(http()).post(`${route}/${id}/rotate-secret`),
     ).expect(201);
     expect(res.body.secret).toMatch(/^whsec_/);
+    expect(res.body.secret).not.toBe(oldSecret);
+    expect(res.body.previousSecret).toBeUndefined();
+    expect(res.body.previousSecretExpiresAt).toBeDefined();
   });
 
-  it('pings the endpoint (mocked fetch → ok)', async () => {
-    global.fetch = jest.fn().mockResolvedValue({
+  it('GET after rotate returns previousSecretExpiresAt and never previousSecret nor secret', async () => {
+    const list = await gw(request(http()).get(route)).expect(200);
+    expect(list.body[0].secret).toBeUndefined();
+    expect(list.body[0].previousSecret).toBeUndefined();
+    expect(list.body[0].previousSecretExpiresAt).toBeDefined();
+    const one = await gw(request(http()).get(`${route}/${id}`)).expect(200);
+    expect(one.body.secret).toBeUndefined();
+    expect(one.body.previousSecret).toBeUndefined();
+    expect(one.body.previousSecretExpiresAt).toBeDefined();
+  });
+
+  it('pings the endpoint (mocked fetch → ok) with both v1 tokens during grace', async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
       ok: true,
       status: 200,
       body: null,
-    }) as any;
+    });
+    global.fetch = fetchMock as any;
     const res = await gw(request(http()).post(`${route}/${id}/ping`)).expect(
       201,
     );
     expect(res.body.ok).toBe(true);
     expect(res.body.responseStatus).toBe(200);
+
+    const header: string =
+      fetchMock.mock.calls[0][1].headers['x-cosmos-signature'];
+    const v1s = header.split(',').filter((p: string) => p.startsWith('v1='));
+    expect(v1s).toHaveLength(2);
+
+    const ts = Number(header.split(',')[0].replace('t=', ''));
+    const body: string = fetchMock.mock.calls[0][1].body;
+    const row = store.get(id);
+    expect(v1s[0].slice(3)).toBe(signPayload(row.secret, body, ts));
+    expect(v1s[1].slice(3)).toBe(signPayload(row.previousSecret, body, ts));
+  });
+
+  it('rejects graceSeconds above the configured maximum (400)', async () => {
+    const res = await gw(
+      request(http())
+        .post(`${route}/${id}/rotate-secret`)
+        .send({ graceSeconds: 999_999_999 }),
+    ).expect(400);
+    expect(JSON.stringify(res.body)).toMatch(
+      /cannot exceed the configured maximum/,
+    );
+  });
+
+  it('graceSeconds=0 revokes immediately (next ping has a single v1)', async () => {
+    const oldSecret = store.get(id).secret;
+    await gw(
+      request(http())
+        .post(`${route}/${id}/rotate-secret`)
+        .send({ graceSeconds: 0 }),
+    ).expect(201);
+    expect(store.get(id).previousSecret).toBeNull();
+
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: null,
+    });
+    global.fetch = fetchMock as any;
+    await gw(request(http()).post(`${route}/${id}/ping`)).expect(201);
+
+    const header: string =
+      fetchMock.mock.calls[0][1].headers['x-cosmos-signature'];
+    const v1s = header.split(',').filter((p: string) => p.startsWith('v1='));
+    expect(v1s).toHaveLength(1);
+    const ts = Number(header.split(',')[0].replace('t=', ''));
+    const body: string = fetchMock.mock.calls[0][1].body;
+    const row = store.get(id);
+    expect(v1s[0].slice(3)).toBe(signPayload(row.secret, body, ts));
+    expect(v1s[0].slice(3)).not.toBe(signPayload(oldSecret, body, ts));
+  });
+
+  it('clears previousSecret in the store once the grace window has expired', async () => {
+    await gw(request(http()).post(`${route}/${id}/rotate-secret`)).expect(201);
+    expect(store.get(id).previousSecret).toMatch(/^whsec_/);
+
+    store.set(id, {
+      ...store.get(id),
+      previousSecretExpiresAt: new Date(Date.now() - 1000),
+    });
+
+    const cleanup = app.get(WebhookSecretCleanupService);
+    await cleanup.tick();
+
+    expect(store.get(id).previousSecret).toBeNull();
+    expect(store.get(id).previousSecretExpiresAt).toBeNull();
   });
 
   it('404s on a foreign/unknown id', () =>

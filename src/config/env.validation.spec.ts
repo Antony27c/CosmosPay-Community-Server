@@ -187,6 +187,13 @@ describe('validateEnv', () => {
         'WEBHOOK_BACKOFF_MS',
       );
     });
+
+    it('rejects WEBHOOK_SECRET_GRACE_SECONDS=abc', () => {
+      expectEnvError(
+        validEnv({ WEBHOOK_SECRET_GRACE_SECONDS: 'abc' }),
+        'WEBHOOK_SECRET_GRACE_SECONDS',
+      );
+    });
   });
 
   describe('Horizon and OpenAPI URLs', () => {

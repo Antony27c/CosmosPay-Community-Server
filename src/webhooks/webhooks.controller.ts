@@ -20,6 +20,7 @@ import { GatewayConsumer } from '../common/interfaces/gateway-consumer.interface
 import { CreateWebhookEndpointDto } from './dto/create-webhook-endpoint.dto';
 import { UpdateWebhookEndpointDto } from './dto/update-webhook-endpoint.dto';
 import { QueryDeliveriesDto } from './dto/query-deliveries.dto';
+import { RotateWebhookSecretDto } from './dto/rotate-webhook-secret.dto';
 import {
   WebhookDeletedEntity,
   WebhookDeliveryEntity,
@@ -97,14 +98,16 @@ export class WebhooksController {
   @Post(':id/rotate-secret')
   @RequirePermissions('webhooks:write')
   @ApiOperation({
-    summary: 'Rotate the signing secret (returns the new secret)',
+    summary:
+      'Rotate the signing secret (returns the new secret). The previous secret keeps signing deliveries until previousSecretExpiresAt, unless graceSeconds=0.',
   })
   @ApiCreatedResponse({ type: WebhookEndpointWithSecretEntity })
   rotateSecret(
     @CurrentConsumer() consumer: GatewayConsumer,
     @Param('id') id: string,
+    @Body() dto?: RotateWebhookSecretDto,
   ) {
-    return this.webhooks.rotateSecret(consumer, id);
+    return this.webhooks.rotateSecret(consumer, id, dto ?? {});
   }
 
   @Post(':id/ping')

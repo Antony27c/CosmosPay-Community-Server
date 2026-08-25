@@ -33,6 +33,16 @@ export class WebhookEndpointEntity {
   })
   eventTypes!: WebhookEventType[];
 
+  @ApiProperty({
+    nullable: true,
+    type: String,
+    format: 'date-time',
+    example: '2026-08-26T17:00:00.000Z',
+    description:
+      'When the previous signing secret stops being accepted on deliveries. Null when no rotation is in flight. The previous secret value itself is never returned.',
+  })
+  previousSecretExpiresAt!: Date | null;
+
   @ApiProperty({ example: '2026-06-21T12:34:56.000Z' })
   createdAt!: Date;
 

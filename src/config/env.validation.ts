@@ -225,6 +225,11 @@ class EnvironmentVariables {
   @IsString()
   WEBHOOK_SIGNATURE_HEADER?: string;
 
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  WEBHOOK_SECRET_GRACE_SECONDS?: number;
+
   // --- OpenAPI / Swagger ---
   @IsOptional()
   @IsUrl(URL_OPTIONS)
@@ -257,7 +262,6 @@ class EnvironmentVariables {
   @IsInt()
   @Min(1)
   BLINDPAY_TIMEOUT_MS?: number;
-
 
   /**
    * Platform-admin credentials JSON (issue #34). Optional at boot — empty means

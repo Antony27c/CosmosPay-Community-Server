@@ -113,6 +113,10 @@ export interface AppConfig {
     maxAttempts: number;
     backoffMs: number;
     signatureHeader: string;
+    // Max overlap (seconds) after rotate-secret during which deliveries are
+    // signed with both the new and previous secrets. Callers may request a
+    // shorter window; 0 revokes the previous secret immediately.
+    secretGraceSeconds: number;
   };
   blindpay: {
     // BlindPay is the fiat<->stablecoin rails provider powering onramp/offramp/KYC.
@@ -265,6 +269,10 @@ export default (): AppConfig => ({
     signatureHeader: (
       process.env.WEBHOOK_SIGNATURE_HEADER ?? 'x-cosmos-signature'
     ).toLowerCase(),
+    secretGraceSeconds: parseInt(
+      process.env.WEBHOOK_SECRET_GRACE_SECONDS ?? '86400',
+      10,
+    ),
   },
   blindpay: {
     apiKey: process.env.BLINDPAY_API_KEY ?? '',
