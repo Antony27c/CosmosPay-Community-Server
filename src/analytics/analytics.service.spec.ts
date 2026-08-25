@@ -54,7 +54,7 @@ describe('AnalyticsService', () => {
     };
     webhookEndpoint: { count: jest.Mock; findMany: jest.Mock };
     webhookDelivery: { count: jest.Mock; findMany: jest.Mock };
-    requestLog: { findMany: jest.Mock };
+    requestLog: { findMany: jest.Mock; count: jest.Mock };
     $queryRaw: jest.Mock;
   };
 
@@ -75,9 +75,10 @@ describe('AnalyticsService', () => {
         count: jest.fn().mockResolvedValue(0),
         findMany: jest.fn().mockResolvedValue([]),
       },
-      requestLog: {
-        findMany: jest.fn().mockResolvedValue([]),
-      },
+    requestLog: {
+      findMany: jest.fn().mockResolvedValue([]),
+      count: jest.fn().mockResolvedValue(0),
+    },
       $queryRaw: jest.fn().mockResolvedValue([]),
     };
 

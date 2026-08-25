@@ -109,9 +109,6 @@ export class SettlementObserverService
     try {
       reconciled += await this.reconcileSwaps(batchSize);
       reconciled += await this.reconcileLiquidity(batchSize);
-      const { batchSize } = this.config.get('observer', { infer: true });
-      await this.reconcileSwaps(batchSize);
-      await this.reconcileLiquidity(batchSize);
       await this.maybeRescueExpired(batchSize);
     } catch (err) {
       this.logger.error('Settlement observer cycle failed', err as Error);
@@ -306,6 +303,7 @@ export class SettlementObserverService
         }
       }
     }
+    return reconciled;
   }
 
   /**
@@ -383,7 +381,6 @@ export class SettlementObserverService
         }
       }
     }
-    return reconciled;
   }
 
   private touchSwapCheck(
@@ -419,15 +416,6 @@ export class SettlementObserverService
     network: string,
     txHash: string,
   ): Promise<Settlement> {
-    try {
-      const tx = await this.stellar.call(network as StellarNetwork, (server) =>
-        server.transactions().transaction(txHash).call(),
-      );
-      return tx.successful ? 'succeeded' : 'failed';
-    } catch (err) {
-      if (horizonHttpStatus(err) === 404) return 'unsettled';
-      this.logger.warn(`Horizon lookup failed for tx ${txHash}`);
-      return 'unsettled';
     for (let attempt = 1; attempt <= HORIZON_LOOKUP_ATTEMPTS; attempt++) {
       try {
         const tx = await this.stellar
