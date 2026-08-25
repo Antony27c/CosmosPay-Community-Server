@@ -1,4 +1,5 @@
 import { Horizon } from '@stellar/stellar-sdk';
+import { ServiceUnavailableException } from '@nestjs/common';
 import { StellarService } from '../stellar/stellar.service';
 import { StellarVerifierService } from './stellar-verifier.service';
 
@@ -18,6 +19,9 @@ describe('StellarVerifierService.verifyByHash', () => {
         public: 'https://horizon.test',
         testnet: 'https://horizon.test',
       },
+      httpTimeoutMs: 1000,
+      maxAttempts: 1,
+      retryBaseMs: 1,
     }),
   } as any;
   const stellar = new StellarService(config);
@@ -78,5 +82,22 @@ describe('StellarVerifierService.verifyByHash', () => {
     const res = await make().verifyByHash(intent, 'd'.repeat(64));
     expect(res.valid).toBe(false);
     expect(res.reason).toBe('Transaction failed on-chain');
+  });
+
+  it('maps Horizon 429 through StellarService.call to ServiceUnavailableException', async () => {
+    jest.spyOn(Horizon.Server.prototype, 'transactions').mockReturnValue({
+      transaction: () => ({
+        call: async () => {
+          const err = new Error('rate limited') as Error & {
+            response: { status: number };
+          };
+          err.response = { status: 429 };
+          throw err;
+        },
+      }),
+    } as any);
+    await expect(
+      make().verifyByHash(intent, 'e'.repeat(64)),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 });

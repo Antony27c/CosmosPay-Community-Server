@@ -114,7 +114,7 @@ paths:
                         status:
                           type: string
                       additionalProperties: true
-      summary: Readiness probe (checks the database)
+      summary: Readiness probe (database + configured Horizon network)
       tags: *a4
   /v1/payment-intents/tx:
     post:

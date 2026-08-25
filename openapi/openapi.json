@@ -179,7 +179,7 @@
             }
           }
         },
-        "summary": "Readiness probe (checks the database)",
+        "summary": "Readiness probe (database + configured Horizon network)",
         "tags": [
           "health"
         ]

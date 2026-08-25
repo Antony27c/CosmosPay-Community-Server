@@ -20,7 +20,7 @@ import { AppConfig, StellarNetwork } from '../config/configuration';
 import { GatewayConsumer } from '../common/interfaces/gateway-consumer.interface';
 import { isUniqueViolation } from '../common/prisma-errors';
 import { PrismaService } from '../prisma/prisma.service';
-import { StellarService } from '../stellar/stellar.service';
+import { horizonHttpStatus, StellarService } from '../stellar/stellar.service';
 import type {
   PaymentIntent,
   PaymentIntentStatus,
@@ -41,10 +41,7 @@ import { StellarVerifierService } from './stellar-verifier.service';
 
 /** Who triggered a status change — stored on the audit row. */
 export type PaymentIntentTransitionActor =
-  | 'api'
-  | 'validate'
-  | 'observer'
-  | 'system';
+  'api' | 'validate' | 'observer' | 'system';
 
 export interface TransitionOptions {
   consumerUsername: string;
@@ -714,15 +711,19 @@ export class PaymentIntentsService {
 
   private async loadAccount(network: StellarNetwork, source: string) {
     try {
-      return await this.stellar.server(network).loadAccount(source);
+      return await this.stellar.call(network, (server) =>
+        server.loadAccount(source),
+      );
     } catch (error: unknown) {
       // A 404 from Horizon means the account doesn't exist / isn't funded.
-      const status = (error as { response?: { status?: number } })?.response
-        ?.status;
+      const status = horizonHttpStatus(error);
       if (status === 404) {
         throw new BadRequestException(
           `Source account ${source} not found or not funded on the ${network} network`,
         );
+      }
+      if (error instanceof ServiceUnavailableException) {
+        throw error;
       }
       this.logger.error('Failed to load source account from Horizon', error);
       throw new ServiceUnavailableException(

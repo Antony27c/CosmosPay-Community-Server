@@ -238,14 +238,18 @@ function makeStellar() {
     account.balances = balances;
     return account;
   });
+  const server = {
+    submitTransaction,
+    transactions: () => ({ transaction: () => ({ call: txCall }) }),
+    loadAccount,
+    strictSendPaths,
+  };
   return {
     passphrase: jest.fn().mockReturnValue('Test SDF Network ; September 2015'),
-    server: jest.fn().mockReturnValue({
-      submitTransaction,
-      transactions: () => ({ transaction: () => ({ call: txCall }) }),
-      loadAccount,
-      strictSendPaths,
-    }),
+    server: jest.fn().mockReturnValue(server),
+    call: jest.fn((_network: string, fn: (s: typeof server) => unknown) =>
+      fn(server),
+    ),
     submitTransaction,
     txCall,
     strictSendPaths,

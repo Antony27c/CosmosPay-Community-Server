@@ -1,4 +1,7 @@
-import { parseAdminCredentials, type AdminCredential } from '../admin/admin-auth';
+import {
+  parseAdminCredentials,
+  type AdminCredential,
+} from '../admin/admin-auth';
 import {
   parseRedirectUrlWhitelist,
   type RedirectUrlWhitelist,
@@ -53,6 +56,15 @@ export interface AppConfig {
     horizon: Record<StellarNetwork, string>;
     baseFee: string;
     timeoutSeconds: number;
+    /**
+     * Per-request budget for Horizon. stellar-sdk v16 CallBuilder.call() has
+     * no AbortSignal, so StellarService.call() races the request against this.
+     */
+    httpTimeoutMs: number;
+    /** Max attempts (initial + retries) for 429 / 5xx / network errors. */
+    maxAttempts: number;
+    /** Base of the exponential backoff between Horizon retries (plus jitter). */
+    retryBaseMs: number;
     swap: {
       // Platform account that collects the swap fee. When unset the fee is
       // disabled (no fee operation is added regardless of feeBps).
@@ -184,6 +196,9 @@ export default (): AppConfig => ({
     },
     baseFee: process.env.STELLAR_BASE_FEE ?? '100',
     timeoutSeconds: parseInt(process.env.STELLAR_TX_TIMEOUT ?? '300', 10),
+    httpTimeoutMs: parseInt(process.env.STELLAR_HTTP_TIMEOUT_MS ?? '10000', 10),
+    maxAttempts: parseInt(process.env.STELLAR_MAX_ATTEMPTS ?? '3', 10),
+    retryBaseMs: parseInt(process.env.STELLAR_RETRY_BASE_MS ?? '250', 10),
     swap: {
       feeWallet: process.env.STELLAR_SWAP_FEE_WALLET ?? '',
       feeBps: parseInt(process.env.STELLAR_SWAP_FEE_BPS ?? '50', 10),

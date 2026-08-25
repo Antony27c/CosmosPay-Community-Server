@@ -113,6 +113,43 @@ describe('validateEnv', () => {
     });
   });
 
+  describe('request log retention', () => {
+    it('rejects REQUEST_LOG_RETENTION_DAYS=abc', () => {
+      expectEnvError(
+        validEnv({ REQUEST_LOG_RETENTION_DAYS: 'abc' }),
+        'REQUEST_LOG_RETENTION_DAYS',
+      );
+    });
+
+    it('accepts REQUEST_LOG_RETENTION_DAYS=0 (prune disabled)', () => {
+      expect(
+        validateEnv(validEnv({ REQUEST_LOG_RETENTION_DAYS: '0' }))
+          .REQUEST_LOG_RETENTION_DAYS,
+      ).toBe(0);
+    });
+
+    it('rejects REQUEST_LOG_PRUNE_INTERVAL_MS=abc', () => {
+      expectEnvError(
+        validEnv({ REQUEST_LOG_PRUNE_INTERVAL_MS: 'abc' }),
+        'REQUEST_LOG_PRUNE_INTERVAL_MS',
+      );
+    });
+
+    it('rejects REQUEST_LOG_PRUNE_BATCH_SIZE=0', () => {
+      expectEnvError(
+        validEnv({ REQUEST_LOG_PRUNE_BATCH_SIZE: '0' }),
+        'REQUEST_LOG_PRUNE_BATCH_SIZE',
+      );
+    });
+
+    it('rejects REQUEST_LOG_PRUNE_MAX_PER_CYCLE=abc', () => {
+      expectEnvError(
+        validEnv({ REQUEST_LOG_PRUNE_MAX_PER_CYCLE: 'abc' }),
+        'REQUEST_LOG_PRUNE_MAX_PER_CYCLE',
+      );
+    });
+  });
+
   describe('payment intent TTL', () => {
     it('rejects PAYMENT_INTENT_TTL_SECONDS=abc', () => {
       expectEnvError(
@@ -169,6 +206,31 @@ describe('validateEnv', () => {
           }),
         ).STELLAR_HORIZON_URL_PUBLIC,
       ).toBe('https://horizon.stellar.org');
+    });
+
+    it('rejects STELLAR_HTTP_TIMEOUT_MS=abc', () => {
+      expectEnvError(
+        validEnv({ STELLAR_HTTP_TIMEOUT_MS: 'abc' }),
+        'STELLAR_HTTP_TIMEOUT_MS',
+      );
+    });
+
+    it('rejects STELLAR_MAX_ATTEMPTS=0', () => {
+      expectEnvError(
+        validEnv({ STELLAR_MAX_ATTEMPTS: '0' }),
+        'STELLAR_MAX_ATTEMPTS',
+      );
+    });
+
+    it('accepts STELLAR_HTTP_TIMEOUT_MS and STELLAR_MAX_ATTEMPTS', () => {
+      const result = validateEnv(
+        validEnv({
+          STELLAR_HTTP_TIMEOUT_MS: '10000',
+          STELLAR_MAX_ATTEMPTS: '3',
+        }),
+      );
+      expect(result.STELLAR_HTTP_TIMEOUT_MS).toBe(10000);
+      expect(result.STELLAR_MAX_ATTEMPTS).toBe(3);
     });
 
     it('rejects invalid OPENAPI_SERVER_URL', () => {

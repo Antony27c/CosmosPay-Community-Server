@@ -252,17 +252,22 @@ function makeStellar(
       ],
     });
 
+  const server = {
+    submitTransaction,
+    effects: () => ({ forTransaction: () => ({ call: effectsCall }) }),
+    transactions: () => ({ transaction: () => ({ call: txCall }) }),
+    loadAccount,
+    liquidityPools: () => ({
+      liquidityPoolId: () => ({ call: fetchPool }),
+    }),
+  };
+
   return {
     passphrase: jest.fn().mockReturnValue('Test SDF Network ; September 2015'),
-    server: jest.fn().mockReturnValue({
-      submitTransaction,
-      effects: () => ({ forTransaction: () => ({ call: effectsCall }) }),
-      transactions: () => ({ transaction: () => ({ call: txCall }) }),
-      loadAccount,
-      liquidityPools: () => ({
-        liquidityPoolId: () => ({ call: fetchPool }),
-      }),
-    }),
+    server: jest.fn().mockReturnValue(server),
+    call: jest.fn((_network: string, fn: (s: typeof server) => unknown) =>
+      fn(server),
+    ),
     submitTransaction,
     effectsCall,
     txCall,
