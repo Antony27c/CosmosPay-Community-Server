@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { GatewayConsumer } from '../common/interfaces/gateway-consumer.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
+import { QueryProductsDto } from './dto/query-products.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 
 @Injectable()
@@ -49,13 +50,24 @@ export class ProductsService {
     });
   }
 
-  async findAll(consumer: GatewayConsumer) {
+  async findAll(consumer: GatewayConsumer, query: QueryProductsDto) {
     const local = await this.resolveConsumer(consumer);
-    const data = await this.prisma.product.findMany({
-      where: { consumerId: local.id },
-      orderBy: { createdAt: 'desc' },
-    });
-    return { data, total: data.length };
+    const where = {
+      consumerId: local.id,
+      ...(query.active !== undefined ? { active: query.active } : {}),
+      ...(query.kind ? { kind: query.kind } : {}),
+      ...(query.reference !== undefined ? { reference: query.reference } : {}),
+    };
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.product.findMany({
+        where,
+        take: query.take,
+        skip: query.skip,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.product.count({ where }),
+    ]);
+    return { data, total, take: query.take, skip: query.skip };
   }
 
   async findOne(consumer: GatewayConsumer, id: string) {
@@ -90,9 +102,20 @@ export class ProductsService {
     });
   }
 
-  async remove(consumer: GatewayConsumer, id: string) {
+  /**
+   * Soft-delete by default (`active: false`). Pass `hard: true` to remove the
+   * row permanently.
+   */
+  async remove(consumer: GatewayConsumer, id: string, hard = false) {
     await this.findOne(consumer, id);
-    await this.prisma.product.delete({ where: { id } });
+    if (hard) {
+      await this.prisma.product.delete({ where: { id } });
+    } else {
+      await this.prisma.product.update({
+        where: { id },
+        data: { active: false },
+      });
+    }
     return { id, deleted: true };
   }
 }
