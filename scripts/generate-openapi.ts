@@ -43,7 +43,14 @@ async function generate(): Promise<void> {
   const jsonPath = join(outDir, 'openapi.json');
   const yamlPath = join(outDir, 'openapi.yaml');
   writeFileSync(jsonPath, JSON.stringify(document, null, 2), 'utf8');
-  writeFileSync(yamlPath, stringify(document), 'utf8');
+  // Inline duplicate objects instead of YAML anchors (`&a1` / `*a1`). Anchor
+  // assignment is not stable across Node/OS runs, so CI `openapi:check` would
+  // fail even when the JSON spec is identical.
+  writeFileSync(
+    yamlPath,
+    stringify(document, { aliasDuplicateObjects: false }),
+    'utf8',
+  );
 
   await app.close();
 

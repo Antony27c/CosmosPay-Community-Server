@@ -4,8 +4,10 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { AppConfig } from '../config/configuration';
 import { GatewayConsumer } from '../common/interfaces/gateway-consumer.interface';
 import type {
   WebhookDelivery,
@@ -14,12 +16,30 @@ import type {
 import { CreateWebhookEndpointDto } from './dto/create-webhook-endpoint.dto';
 import { UpdateWebhookEndpointDto } from './dto/update-webhook-endpoint.dto';
 import { QueryDeliveriesDto } from './dto/query-deliveries.dto';
+import { RotateWebhookSecretDto } from './dto/rotate-webhook-secret.dto';
 import { WebhookDispatcherService } from './webhook-dispatcher.service';
 import { WebhookDestinationGuard } from './webhook-destination.guard';
 import { WebhookUrlValidationError } from './webhook-url.validator';
 
-// Endpoint without the signing secret — what list/get responses return.
-export type SafeWebhookEndpoint = Omit<WebhookEndpoint, 'secret'>;
+// Endpoint without signing secrets — what list/get responses return.
+export type SafeWebhookEndpoint = Omit<
+  WebhookEndpoint,
+  'secret' | 'previousSecret'
+>;
+
+/** Create / rotate responses: current secret only, never the previous one. */
+export type WebhookEndpointWithSecret = Omit<WebhookEndpoint, 'previousSecret'>;
+
+function omitFields<T extends object, K extends keyof T>(
+  obj: T,
+  ...keys: K[]
+): Omit<T, K> {
+  const clone = { ...obj };
+  for (const key of keys) {
+    delete clone[key];
+  }
+  return clone;
+}
 
 @Injectable()
 export class WebhooksService {
@@ -29,6 +49,7 @@ export class WebhooksService {
     private readonly prisma: PrismaService,
     private readonly dispatcher: WebhookDispatcherService,
     private readonly destinations: WebhookDestinationGuard,
+    private readonly config: ConfigService<AppConfig, true>,
   ) {}
 
   private resolveConsumer(consumer: GatewayConsumer) {
@@ -47,8 +68,11 @@ export class WebhooksService {
   }
 
   private strip(endpoint: WebhookEndpoint): SafeWebhookEndpoint {
-    const { secret: _secret, ...safe } = endpoint;
-    return safe;
+    return omitFields(endpoint, 'secret', 'previousSecret');
+  }
+
+  private stripPrevious(endpoint: WebhookEndpoint): WebhookEndpointWithSecret {
+    return omitFields(endpoint, 'previousSecret');
   }
 
   // ── CRUD: endpoints ─────────────────────────────────────────────────────────
@@ -56,7 +80,7 @@ export class WebhooksService {
   async create(
     consumer: GatewayConsumer,
     dto: CreateWebhookEndpointDto,
-  ): Promise<WebhookEndpoint> {
+  ): Promise<WebhookEndpointWithSecret> {
     await this.assertUrlAllowed(dto.url);
     const localConsumer = await this.resolveConsumer(consumer);
 
@@ -74,7 +98,7 @@ export class WebhooksService {
     this.logger.log(
       `Registered webhook endpoint ${endpoint.id} (${endpoint.url}) for ${consumer.username}`,
     );
-    return endpoint;
+    return this.stripPrevious(endpoint);
   }
 
   async findAll(consumer: GatewayConsumer): Promise<SafeWebhookEndpoint[]> {
@@ -132,18 +156,58 @@ export class WebhooksService {
     return { id, deleted: true };
   }
 
-  /** Rotates the signing secret. Returns the endpoint WITH the new secret. */
+  /**
+   * Rotates the signing secret. Returns the endpoint WITH the new secret
+   * (never the previous one). The old secret keeps signing deliveries until
+   * `previousSecretExpiresAt`, unless `graceSeconds=0` revokes it immediately.
+   *
+   * A second rotate while the grace window is still open keeps the original
+   * previous secret and its expiry. Overwriting it would drop the secret
+   * production handlers may still be verifying.
+   */
   async rotateSecret(
     consumer: GatewayConsumer,
     id: string,
-  ): Promise<WebhookEndpoint> {
-    await this.getOwned(consumer, id);
+    dto: RotateWebhookSecretDto = {},
+  ): Promise<WebhookEndpointWithSecret> {
+    const current = await this.getOwned(consumer, id);
+    const maxGrace = this.config.get('webhooks', {
+      infer: true,
+    }).secretGraceSeconds;
+    const graceSeconds = dto.graceSeconds ?? maxGrace;
+    if (graceSeconds > maxGrace) {
+      throw new BadRequestException(
+        `graceSeconds cannot exceed the configured maximum (${maxGrace})`,
+      );
+    }
+
+    const newSecret = this.generateSecret();
+    const revokeImmediately = graceSeconds === 0;
+    const keepOriginalPrevious =
+      !revokeImmediately &&
+      current.previousSecret != null &&
+      current.previousSecretExpiresAt != null &&
+      current.previousSecretExpiresAt.getTime() > Date.now();
     const updated = await this.prisma.webhookEndpoint.update({
       where: { id },
-      data: { secret: this.generateSecret() },
+      data: {
+        secret: newSecret,
+        previousSecret: revokeImmediately
+          ? null
+          : keepOriginalPrevious
+            ? current.previousSecret
+            : current.secret,
+        previousSecretExpiresAt: revokeImmediately
+          ? null
+          : keepOriginalPrevious
+            ? current.previousSecretExpiresAt
+            : new Date(Date.now() + graceSeconds * 1000),
+      },
     });
-    this.logger.log(`Rotated secret for webhook endpoint ${id}`);
-    return updated;
+    this.logger.log(
+      `Rotated secret for webhook endpoint ${id} (graceSeconds=${graceSeconds})`,
+    );
+    return this.stripPrevious(updated);
   }
 
   // ── Deliveries (traceability) ────────────────────────────────────────────────

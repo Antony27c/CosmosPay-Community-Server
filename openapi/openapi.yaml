@@ -8,7 +8,7 @@ paths:
         "200":
           description: ""
       summary: Liveness probe
-      tags: &a4
+      tags:
         - health
   /v1/health/readiness:
     get:
@@ -27,7 +27,7 @@ paths:
                     example: ok
                   info:
                     type: object
-                    example: &a1
+                    example:
                       database:
                         status: up
                     additionalProperties:
@@ -53,7 +53,9 @@ paths:
                     nullable: true
                   details:
                     type: object
-                    example: *a1
+                    example:
+                      database:
+                        status: up
                     additionalProperties:
                       type: object
                       required:
@@ -75,7 +77,7 @@ paths:
                   info:
                     type: object
                     example:
-                      database: &a2
+                      database:
                         status: up
                     additionalProperties:
                       type: object
@@ -89,7 +91,7 @@ paths:
                   error:
                     type: object
                     example:
-                      redis: &a3
+                      redis:
                         status: down
                         message: Could not connect
                     additionalProperties:
@@ -104,8 +106,11 @@ paths:
                   details:
                     type: object
                     example:
-                      database: *a2
-                      redis: *a3
+                      database:
+                        status: up
+                      redis:
+                        status: down
+                        message: Could not connect
                     additionalProperties:
                       type: object
                       required:
@@ -115,7 +120,8 @@ paths:
                           type: string
                       additionalProperties: true
       summary: Readiness probe (database + configured Horizon network)
-      tags: *a4
+      tags:
+        - health
   /v1/payment-intents/tx:
     post:
       operationId: PaymentIntentsController_createTx_v1
@@ -134,7 +140,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/TxPaymentIntentEntity"
       summary: Create a SEP-7 `tx` intent (source known → unsigned XDR + tx URI + QR)
-      tags: &a5
+      tags:
         - payment-intents
   /v1/payment-intents/pay:
     post:
@@ -154,7 +160,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/PayPaymentIntentEntity"
       summary: Create a SEP-7 `pay` intent (no source → pay URI + QR, no XDR)
-      tags: *a5
+      tags:
+        - payment-intents
   /v1/payment-intents:
     get:
       operationId: PaymentIntentsController_findAll_v1
@@ -192,7 +199,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/PaymentIntentListEntity"
       summary: List the consumer's payment intents
-      tags: *a5
+      tags:
+        - payment-intents
   /v1/payment-intents/{id}/transitions:
     get:
       operationId: PaymentIntentsController_listTransitions_v1
@@ -212,7 +220,8 @@ paths:
                 items:
                   $ref: "#/components/schemas/PaymentIntentTransitionEntity"
       summary: List the status-transition history for a payment intent
-      tags: *a5
+      tags:
+        - payment-intents
   /v1/payment-intents/{id}:
     get:
       operationId: PaymentIntentsController_findOne_v1
@@ -230,7 +239,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/PaymentIntentEntity"
       summary: Get a payment intent by id
-      tags: *a5
+      tags:
+        - payment-intents
     patch:
       operationId: PaymentIntentsController_update_v1
       parameters:
@@ -253,7 +263,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/PaymentIntentEntity"
       summary: Update a payment intent (status / txHash / reference)
-      tags: *a5
+      tags:
+        - payment-intents
     delete:
       operationId: PaymentIntentsController_remove_v1
       parameters:
@@ -270,7 +281,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/DeletedEntity"
       summary: Delete a payment intent
-      tags: *a5
+      tags:
+        - payment-intents
   /v1/payment-intents/{id}/validate:
     post:
       operationId: PaymentIntentsController_validate_v1
@@ -295,7 +307,8 @@ paths:
                 $ref: "#/components/schemas/ValidationOutcomeEntity"
       summary: Validate a submitted tx against the intent (tx success + destination +
         amount + memo); finalizes status and fires the event
-      tags: *a5
+      tags:
+        - payment-intents
   /v1/swaps/quote:
     post:
       operationId: SwapsController_quote_v1
@@ -315,7 +328,7 @@ paths:
                 $ref: "#/components/schemas/SwapQuoteEntity"
       summary: Quote a swap (Horizon strict-send path search + fee/slippage); persists
         nothing
-      tags: &a6
+      tags:
         - swaps
   /v1/swaps:
     post:
@@ -344,7 +357,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/SwapEntity"
       summary: Create a swap → unsigned XDR + SEP-7 tx URI + QR for the wallet to sign
-      tags: *a6
+      tags:
+        - swaps
     get:
       operationId: SwapsController_findAll_v1
       parameters:
@@ -380,7 +394,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/SwapListEntity"
       summary: List the consumer's swaps
-      tags: *a6
+      tags:
+        - swaps
   /v1/swaps/{id}:
     get:
       operationId: SwapsController_findOne_v1
@@ -398,7 +413,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/SwapEntity"
       summary: Get a swap by id
-      tags: *a6
+      tags:
+        - swaps
   /v1/swaps/{id}/submit:
     post:
       operationId: SwapsController_submit_v1
@@ -423,7 +439,8 @@ paths:
                 $ref: "#/components/schemas/SwapSubmitResultEntity"
       summary: Relay the signed swap transaction to the network (hash-checked);
         finalizes status
-      tags: *a6
+      tags:
+        - swaps
   /v1/liquidity-pools/deposit:
     post:
       operationId: LiquidityPoolsController_deposit_v1
@@ -443,7 +460,7 @@ paths:
                 $ref: "#/components/schemas/LiquidityOperationEntity"
       summary: Build a pool deposit → unsigned XDR + SEP-7 tx URI + QR for the wallet
         to sign
-      tags: &a7
+      tags:
         - liquidity-pools
   /v1/liquidity-pools/withdraw:
     post:
@@ -463,7 +480,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/LiquidityOperationEntity"
       summary: Build a pool withdrawal (burn shares) → unsigned XDR + SEP-7 tx URI + QR
-      tags: *a7
+      tags:
+        - liquidity-pools
   /v1/liquidity-pools/positions:
     get:
       operationId: LiquidityPoolsController_positions_v1
@@ -483,7 +501,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/LiquidityPositionListEntity"
       summary: An account's pool share positions with redeemable amounts
-      tags: *a7
+      tags:
+        - liquidity-pools
   /v1/liquidity-pools/operations:
     get:
       operationId: LiquidityPoolsController_findAllOperations_v1
@@ -528,7 +547,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/LiquidityOperationListEntity"
       summary: List the consumer's liquidity pool operations
-      tags: *a7
+      tags:
+        - liquidity-pools
   /v1/liquidity-pools/operations/{id}:
     get:
       operationId: LiquidityPoolsController_findOneOperation_v1
@@ -546,7 +566,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/LiquidityOperationEntity"
       summary: Get a liquidity pool operation by id
-      tags: *a7
+      tags:
+        - liquidity-pools
   /v1/liquidity-pools/operations/{id}/submit:
     post:
       operationId: LiquidityPoolsController_submit_v1
@@ -571,7 +592,8 @@ paths:
                 $ref: "#/components/schemas/LiquiditySubmitResultEntity"
       summary: Relay the signed transaction to the network (hash-checked); finalizes
         status
-      tags: *a7
+      tags:
+        - liquidity-pools
   /v1/liquidity-pools:
     get:
       operationId: LiquidityPoolsController_listPools_v1
@@ -630,7 +652,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/LiquidityPoolListEntity"
       summary: Browse on-chain liquidity pools (Horizon proxy)
-      tags: *a7
+      tags:
+        - liquidity-pools
   /v1/liquidity-pools/{poolId}:
     get:
       operationId: LiquidityPoolsController_getPool_v1
@@ -648,7 +671,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/LiquidityPoolEntity"
       summary: Get a liquidity pool by id (Horizon proxy)
-      tags: *a7
+      tags:
+        - liquidity-pools
   /v1/webhooks:
     post:
       operationId: WebhooksController_create_v1
@@ -667,7 +691,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/WebhookEndpointWithSecretEntity"
       summary: Register a webhook endpoint (returns the signing secret — shown once)
-      tags: &a8
+      tags:
         - webhooks
     get:
       operationId: WebhooksController_findAll_v1
@@ -682,7 +706,8 @@ paths:
                 items:
                   $ref: "#/components/schemas/WebhookEndpointEntity"
       summary: List the consumer's webhook endpoints
-      tags: *a8
+      tags:
+        - webhooks
   /v1/webhooks/{id}:
     get:
       operationId: WebhooksController_findOne_v1
@@ -700,7 +725,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/WebhookEndpointEntity"
       summary: Get a webhook endpoint
-      tags: *a8
+      tags:
+        - webhooks
     patch:
       operationId: WebhooksController_update_v1
       parameters:
@@ -723,7 +749,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/WebhookEndpointEntity"
       summary: Update a webhook endpoint (url/description/enabled/eventTypes)
-      tags: *a8
+      tags:
+        - webhooks
     delete:
       operationId: WebhooksController_remove_v1
       parameters:
@@ -740,7 +767,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/WebhookDeletedEntity"
       summary: Delete a webhook endpoint
-      tags: *a8
+      tags:
+        - webhooks
   /v1/webhooks/{id}/rotate-secret:
     post:
       operationId: WebhooksController_rotateSecret_v1
@@ -750,6 +778,12 @@ paths:
           in: path
           schema:
             type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RotateWebhookSecretDto"
       responses:
         "201":
           description: ""
@@ -757,8 +791,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/WebhookEndpointWithSecretEntity"
-      summary: Rotate the signing secret (returns the new secret)
-      tags: *a8
+      summary: Rotate the signing secret (returns the new secret). The previous secret
+        keeps signing deliveries until previousSecretExpiresAt, unless
+        graceSeconds=0.
+      tags:
+        - webhooks
   /v1/webhooks/{id}/ping:
     post:
       operationId: WebhooksController_ping_v1
@@ -776,7 +813,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/WebhookPingEntity"
       summary: Send a test event to verify the endpoint
-      tags: *a8
+      tags:
+        - webhooks
   /v1/webhooks/{id}/deliveries:
     get:
       operationId: WebhooksController_listDeliveries_v1
@@ -816,7 +854,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/WebhookDeliveryListEntity"
       summary: List delivery attempts for an endpoint (audit trail)
-      tags: *a8
+      tags:
+        - webhooks
   /v1/webhooks/{id}/deliveries/{deliveryId}/redeliver:
     post:
       operationId: WebhooksController_redeliver_v1
@@ -839,7 +878,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/WebhookDeliveryEntity"
       summary: Manually re-send a past delivery
-      tags: *a8
+      tags:
+        - webhooks
   /v1/summary:
     get:
       operationId: AnalyticsController_summary_v1
@@ -848,7 +888,7 @@ paths:
         "200":
           description: Aggregated overview for the consumer.
       summary: "Overview metrics: totals, settled volume, webhook health, 30-day series"
-      tags: &a9
+      tags:
         - analytics
   /v1/balances:
     get:
@@ -858,7 +898,8 @@ paths:
         "200":
           description: Balances per asset for the consumer.
       summary: Settled (and pending) amount per asset
-      tags: *a9
+      tags:
+        - analytics
   /v1/logs:
     get:
       operationId: AnalyticsController_apiLogs_v1
@@ -867,7 +908,8 @@ paths:
         "200":
           description: API request log for the consumer.
       summary: Recent API requests reaching the service (with details)
-      tags: *a9
+      tags:
+        - analytics
   /v1/logs/webhooks:
     get:
       operationId: AnalyticsController_webhookLogs_v1
@@ -876,7 +918,8 @@ paths:
         "200":
           description: Webhook delivery log for the consumer.
       summary: Recent webhook deliveries across all endpoints (with details)
-      tags: *a9
+      tags:
+        - analytics
   /v1/kyc/receivers:
     post:
       operationId: ReceiversController_create_v1
@@ -895,7 +938,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ReceiverEntity"
       summary: Create a receiver (start KYC/KYB)
-      tags: &a10
+      tags:
         - kyc
     get:
       operationId: ReceiversController_findAll_v1
@@ -910,7 +953,8 @@ paths:
                 items:
                   $ref: "#/components/schemas/ReceiverEntity"
       summary: List the consumer's receivers
-      tags: *a10
+      tags:
+        - kyc
   /v1/kyc/receivers/{id}:
     get:
       operationId: ReceiversController_findOne_v1
@@ -928,7 +972,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/ReceiverEntity"
       summary: Get a receiver (refreshes KYC status from BlindPay)
-      tags: *a10
+      tags:
+        - kyc
     patch:
       operationId: ReceiversController_update_v1
       parameters:
@@ -951,7 +996,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/ReceiverEntity"
       summary: Update a receiver
-      tags: *a10
+      tags:
+        - kyc
     delete:
       operationId: ReceiversController_remove_v1
       parameters:
@@ -964,7 +1010,8 @@ paths:
         "200":
           description: ""
       summary: Delete a receiver
-      tags: *a10
+      tags:
+        - kyc
   /v1/kyc/receivers/{id}/approve:
     post:
       operationId: ReceiversController_approve_v1
@@ -988,7 +1035,8 @@ paths:
             'pending_review')
       summary: Approve a pending-review receiver (owner/admin review gate); sends the
         customer the terms link and returns it
-      tags: *a10
+      tags:
+        - kyc
   /v1/kyc/receivers/{id}/tos:
     post:
       operationId: ReceiversController_requestTos_v1
@@ -1019,7 +1067,8 @@ paths:
           description: ""
       summary: Request a terms-of-service link for a receiver ('code' returns the URL;
         'email' sends it, max once/day)
-      tags: *a10
+      tags:
+        - kyc
   /v1/kyc/receivers/{id}/enable:
     post:
       operationId: ReceiversController_enable_v1
@@ -1046,7 +1095,8 @@ paths:
           description: Invalid KYC status transition (e.g. receiver is not in
             'pending_user')
       summary: Enable an inactive receiver with an accepted terms-of-service id
-      tags: *a10
+      tags:
+        - kyc
   /v1/kyc/receivers/{id}/access:
     patch:
       operationId: ReceiversController_setAccess_v1
@@ -1071,7 +1121,8 @@ paths:
                 $ref: "#/components/schemas/ReceiverEntity"
       summary: Enable or disable a fiat account (owner/admin kill-switch for
         onramp/offramp)
-      tags: *a10
+      tags:
+        - kyc
   /v1/kyc/receivers/{receiverId}/wallets/sign-message:
     get:
       operationId: WalletsController_signMessage_v1
@@ -1085,7 +1136,7 @@ paths:
         "200":
           description: ""
       summary: Get the message to sign for the secure wallet flow
-      tags: &a11
+      tags:
         - kyc
   /v1/kyc/receivers/{receiverId}/wallets:
     post:
@@ -1110,7 +1161,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/WalletEntity"
       summary: Register a blockchain wallet for a receiver
-      tags: *a11
+      tags:
+        - kyc
     get:
       operationId: WalletsController_findAll_v1
       parameters:
@@ -1129,7 +1181,8 @@ paths:
                 items:
                   $ref: "#/components/schemas/WalletEntity"
       summary: List a receiver's wallets
-      tags: *a11
+      tags:
+        - kyc
   /v1/kyc/receivers/{receiverId}/wallets/{id}:
     delete:
       operationId: WalletsController_remove_v1
@@ -1148,7 +1201,8 @@ paths:
         "200":
           description: ""
       summary: Delete a wallet
-      tags: *a11
+      tags:
+        - kyc
   /v1/kyc/receivers/{receiverId}/bank-accounts:
     post:
       operationId: BankAccountsController_create_v1
@@ -1172,7 +1226,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/BankAccountEntity"
       summary: Add a fiat bank account for a receiver
-      tags: &a12
+      tags:
         - kyc
     get:
       operationId: BankAccountsController_findAll_v1
@@ -1192,7 +1246,8 @@ paths:
                 items:
                   $ref: "#/components/schemas/BankAccountEntity"
       summary: List a receiver's bank accounts
-      tags: *a12
+      tags:
+        - kyc
   /v1/kyc/receivers/{receiverId}/bank-accounts/{id}:
     delete:
       operationId: BankAccountsController_remove_v1
@@ -1211,7 +1266,8 @@ paths:
         "200":
           description: ""
       summary: Delete a bank account
-      tags: *a12
+      tags:
+        - kyc
   /v1/kyc/upload:
     post:
       operationId: KycMetaController_upload_v1
@@ -1238,7 +1294,7 @@ paths:
         "201":
           description: ""
       summary: Upload a KYC document; returns its file_url
-      tags: &a13
+      tags:
         - kyc
   /v1/kyc/terms-of-service:
     post:
@@ -1254,7 +1310,8 @@ paths:
         "201":
           description: ""
       summary: Start ToS acceptance; returns the hosted URL (first KYC step)
-      tags: *a13
+      tags:
+        - kyc
   /v1/kyc/rails:
     get:
       operationId: KycMetaController_rails_v1
@@ -1263,7 +1320,8 @@ paths:
         "200":
           description: ""
       summary: List available bank rails
-      tags: *a13
+      tags:
+        - kyc
   /v1/kyc/bank-details:
     get:
       operationId: KycMetaController_bankDetails_v1
@@ -1277,7 +1335,8 @@ paths:
         "200":
           description: ""
       summary: Get the field schema required by a rail
-      tags: *a13
+      tags:
+        - kyc
   /v1/products:
     post:
       operationId: ProductsController_create_v1
@@ -1296,7 +1355,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProductEntity"
       summary: Create a product
-      tags: &a14
+      tags:
         - products
     get:
       operationId: ProductsController_findAll_v1
@@ -1343,7 +1402,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProductListEntity"
       summary: List the consumer's products
-      tags: *a14
+      tags:
+        - products
   /v1/products/{id}:
     get:
       operationId: ProductsController_findOne_v1
@@ -1361,7 +1421,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProductEntity"
       summary: Get a product by id
-      tags: *a14
+      tags:
+        - products
     patch:
       operationId: ProductsController_update_v1
       parameters:
@@ -1384,7 +1445,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProductEntity"
       summary: Update a product
-      tags: *a14
+      tags:
+        - products
     delete:
       operationId: ProductsController_remove_v1
       parameters:
@@ -1410,7 +1472,8 @@ paths:
                 $ref: "#/components/schemas/ProductDeletedEntity"
       summary: Soft-delete a product (active=false). Pass ?hard=true to permanently
         delete.
-      tags: *a14
+      tags:
+        - products
   /v1/customers:
     post:
       operationId: CustomersController_create_v1
@@ -1425,7 +1488,7 @@ paths:
         "201":
           description: ""
       summary: Create a customer
-      tags: &a15
+      tags:
         - customers
     get:
       operationId: CustomersController_findAll_v1
@@ -1434,7 +1497,8 @@ paths:
         "200":
           description: ""
       summary: List the consumer's customers (with payment stats)
-      tags: *a15
+      tags:
+        - customers
   /v1/customers/{id}:
     get:
       operationId: CustomersController_findOne_v1
@@ -1448,7 +1512,8 @@ paths:
         "200":
           description: ""
       summary: Get a customer by id
-      tags: *a15
+      tags:
+        - customers
     patch:
       operationId: CustomersController_update_v1
       parameters:
@@ -1467,7 +1532,8 @@ paths:
         "200":
           description: ""
       summary: Update a customer
-      tags: *a15
+      tags:
+        - customers
     delete:
       operationId: CustomersController_remove_v1
       parameters:
@@ -1480,7 +1546,8 @@ paths:
         "200":
           description: ""
       summary: Delete a customer
-      tags: *a15
+      tags:
+        - customers
   /v1/onramp/quotes:
     post:
       operationId: OnrampController_createQuote_v1
@@ -1499,7 +1566,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/PayinQuoteEntity"
       summary: Create a payin quote (expires in ~5 min)
-      tags: &a16
+      tags:
         - onramp
   /v1/onramp/payins:
     post:
@@ -1519,7 +1586,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/PayinEntity"
       summary: Create a payin from a quote; returns funding instructions
-      tags: *a16
+      tags:
+        - onramp
     get:
       operationId: OnrampController_findAll_v1
       parameters: []
@@ -1533,7 +1601,8 @@ paths:
                 items:
                   $ref: "#/components/schemas/PayinEntity"
       summary: List the consumer's payins
-      tags: *a16
+      tags:
+        - onramp
   /v1/onramp/payins/{id}:
     get:
       operationId: OnrampController_findOne_v1
@@ -1551,7 +1620,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/PayinEntity"
       summary: Get a payin (refreshes status from BlindPay)
-      tags: *a16
+      tags:
+        - onramp
   /v1/onramp/trustline:
     post:
       operationId: OnrampController_createTrustline_v1
@@ -1566,7 +1636,8 @@ paths:
         "201":
           description: ""
       summary: Build an unsigned Stellar trustline tx (XDR) for the customer to sign
-      tags: *a16
+      tags:
+        - onramp
   /v1/onramp/receivers/{receiverId}/virtual-accounts:
     post:
       operationId: VirtualAccountsController_create_v1
@@ -1586,7 +1657,7 @@ paths:
         "201":
           description: ""
       summary: Create a virtual account for a receiver
-      tags: &a17
+      tags:
         - onramp
     get:
       operationId: VirtualAccountsController_findAll_v1
@@ -1600,7 +1671,8 @@ paths:
         "200":
           description: ""
       summary: List a receiver's virtual accounts
-      tags: *a17
+      tags:
+        - onramp
   /v1/offramp/quotes:
     post:
       operationId: OfframpController_createQuote_v1
@@ -1619,7 +1691,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/PayoutQuoteEntity"
       summary: Create a payout quote (EVM quote carries the approve contract)
-      tags: &a18
+      tags:
         - offramp
   /v1/offramp/payouts/authorize:
     post:
@@ -1635,7 +1707,8 @@ paths:
         "201":
           description: ""
       summary: Build the unsigned Stellar/Solana payout tx to sign
-      tags: *a18
+      tags:
+        - offramp
   /v1/offramp/payouts:
     post:
       operationId: OfframpController_createPayout_v1
@@ -1654,7 +1727,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/PayoutEntity"
       summary: Create a payout from a quote
-      tags: *a18
+      tags:
+        - offramp
     get:
       operationId: OfframpController_findAll_v1
       parameters: []
@@ -1668,7 +1742,8 @@ paths:
                 items:
                   $ref: "#/components/schemas/PayoutEntity"
       summary: List the consumer's payouts
-      tags: *a18
+      tags:
+        - offramp
   /v1/offramp/payouts/{id}:
     get:
       operationId: OfframpController_findOne_v1
@@ -1686,7 +1761,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/PayoutEntity"
       summary: Get a payout (refreshes status from BlindPay)
-      tags: *a18
+      tags:
+        - offramp
   /v1/offramp/payouts/{id}/documents:
     post:
       operationId: OfframpController_addDocument_v1
@@ -1706,7 +1782,8 @@ paths:
         "201":
           description: ""
       summary: Attach a compliance document to a payout
-      tags: *a18
+      tags:
+        - offramp
 info:
   title: Cosmos Pay — Payments API
   description: "Payments microservice (Stellar payment intents). All endpoints
@@ -3139,10 +3216,10 @@ components:
             endpoint.
         eventTypes:
           type: array
-          example: &a19
+          example:
             - PAYMENT_INTENT_SUCCEEDED
           description: Subscribed events; empty means all.
-          items: &a20
+          items:
             type: string
             enum:
               - PAYMENT_INTENT_CREATED
@@ -3168,6 +3245,14 @@ components:
               - LIQUIDITY_SUCCEEDED
               - LIQUIDITY_FAILED
               - LIQUIDITY_EXPIRED
+        previousSecretExpiresAt:
+          type: string
+          nullable: true
+          format: date-time
+          example: 2026-08-26T17:00:00.000Z
+          description: When the previous signing secret stops being accepted on
+            deliveries. Null when no rotation is in flight. The previous secret
+            value itself is never returned.
         createdAt:
           format: date-time
           type: string
@@ -3187,6 +3272,7 @@ components:
         - enabled
         - destinationBlocked
         - eventTypes
+        - previousSecretExpiresAt
         - createdAt
         - updatedAt
         - secret
@@ -3214,9 +3300,43 @@ components:
             endpoint.
         eventTypes:
           type: array
-          example: *a19
+          example:
+            - PAYMENT_INTENT_SUCCEEDED
           description: Subscribed events; empty means all.
-          items: *a20
+          items:
+            type: string
+            enum:
+              - PAYMENT_INTENT_CREATED
+              - PAYMENT_INTENT_UPDATED
+              - PAYMENT_INTENT_SUCCEEDED
+              - PAYMENT_INTENT_FAILED
+              - PAYMENT_INTENT_CANCELLED
+              - PAYMENT_INTENT_DELETED
+              - RECEIVER_UPDATED
+              - PAYIN_CREATED
+              - PAYIN_UPDATED
+              - PAYIN_COMPLETED
+              - PAYOUT_CREATED
+              - PAYOUT_UPDATED
+              - PAYOUT_COMPLETED
+              - SWAP_CREATED
+              - SWAP_SUBMITTED
+              - SWAP_SUCCEEDED
+              - SWAP_FAILED
+              - SWAP_EXPIRED
+              - LIQUIDITY_CREATED
+              - LIQUIDITY_SUBMITTED
+              - LIQUIDITY_SUCCEEDED
+              - LIQUIDITY_FAILED
+              - LIQUIDITY_EXPIRED
+        previousSecretExpiresAt:
+          type: string
+          nullable: true
+          format: date-time
+          example: 2026-08-26T17:00:00.000Z
+          description: When the previous signing secret stops being accepted on
+            deliveries. Null when no rotation is in flight. The previous secret
+            value itself is never returned.
         createdAt:
           format: date-time
           type: string
@@ -3232,6 +3352,7 @@ components:
         - enabled
         - destinationBlocked
         - eventTypes
+        - previousSecretExpiresAt
         - createdAt
         - updatedAt
     UpdateWebhookEndpointDto:
@@ -3285,6 +3406,17 @@ components:
       required:
         - id
         - deleted
+    RotateWebhookSecretDto:
+      type: object
+      properties:
+        graceSeconds:
+          type: number
+          description: Overlap window in seconds during which deliveries are signed with
+            both the new and previous secrets. Defaults to
+            WEBHOOK_SECRET_GRACE_SECONDS. Pass 0 to revoke the previous secret
+            immediately (confirmed leak). Cannot exceed the configured maximum.
+          example: 86400
+          minimum: 0
     WebhookPingEntity:
       type: object
       properties:
@@ -3483,13 +3615,13 @@ components:
       properties:
         type:
           type: string
-          enum: &a21
+          enum:
             - individual
             - business
           example: individual
         kyc_type:
           type: string
-          enum: &a22
+          enum:
             - light
             - standard
             - enhanced
@@ -3729,11 +3861,16 @@ components:
       properties:
         type:
           type: string
-          enum: *a21
+          enum:
+            - individual
+            - business
           example: individual
         kyc_type:
           type: string
-          enum: *a22
+          enum:
+            - light
+            - standard
+            - enhanced
           example: standard
         email:
           type: string
@@ -3871,7 +4008,7 @@ components:
           example: Primary wallet
         network:
           type: string
-          enum: &a26
+          enum:
             - ethereum
             - base
             - arbitrum
@@ -4165,7 +4302,7 @@ components:
           description: Asset code the price is in. Omit for native lumens (XLM).
         kind:
           type: string
-          enum: &a23
+          enum:
             - recurring
             - one_time
             - link
@@ -4270,7 +4407,10 @@ components:
           description: Asset code the price is in. Omit for native lumens (XLM).
         kind:
           type: string
-          enum: *a23
+          enum:
+            - recurring
+            - one_time
+            - link
           default: one_time
         active:
           type: boolean
@@ -4380,7 +4520,7 @@ components:
             receives the minted stablecoin.
         currency_type:
           type: string
-          enum: &a25
+          enum:
             - sender
             - receiver
           example: sender
@@ -4401,7 +4541,7 @@ components:
             `_bitso` payout rails)."
         token:
           type: string
-          enum: &a24
+          enum:
             - USDC
             - USDT
             - USDB
@@ -4527,7 +4667,10 @@ components:
           example: cfsb
         token:
           type: string
-          enum: *a24
+          enum:
+            - USDC
+            - USDT
+            - USDB
           example: USDC
         blockchain_wallet_id:
           type: string
@@ -4553,7 +4696,9 @@ components:
             /v1/kyc/receivers/:id/bank-accounts) that receives the fiat.
         currency_type:
           type: string
-          enum: *a25
+          enum:
+            - sender
+            - receiver
           example: sender
         cover_fees:
           type: boolean
@@ -4565,11 +4710,27 @@ components:
           description: Amount in minor units (integer).
         network:
           type: string
-          enum: *a26
+          enum:
+            - ethereum
+            - base
+            - arbitrum
+            - polygon
+            - stellar
+            - solana
+            - tron
+            - sepolia
+            - base_sepolia
+            - arbitrum_sepolia
+            - polygon_amoy
+            - stellar_testnet
+            - solana_devnet
           example: base
         token:
           type: string
-          enum: *a24
+          enum:
+            - USDC
+            - USDT
+            - USDB
           example: USDC
         description:
           type: string
