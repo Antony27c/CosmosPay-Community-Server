@@ -271,8 +271,6 @@ describe('StellarVerifierService.findMatchingPayment', () => {
 
   it('resumes from persisted cursor', async () => {
     prisma.horizonAccountCursor.findUnique.mockResolvedValue({
-      network: 'testnet',
-      account: 'GDEST',
       pagingToken: '100',
     });
     mockSuccessfulTx();
@@ -291,17 +289,113 @@ describe('StellarVerifierService.findMatchingPayment', () => {
 
     expect(orderCalls).toContain('asc');
     expect(cursorCalls).toContain('100');
+    expect(prisma.horizonAccountCursor.findUnique).toHaveBeenCalledWith({
+      where: { intentId: 'pi_scan' },
+      select: { pagingToken: true },
+    });
     expect(res.valid).toBe(true);
     expect(res.txHash).toBe('tx_after_cursor');
     expect(prisma.horizonAccountCursor.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: {
-          network_account: { network: 'testnet', account: 'GDEST' },
-        },
-        create: expect.objectContaining({ pagingToken: '150' }),
+        where: { intentId: 'pi_scan' },
+        create: expect.objectContaining({
+          intentId: 'pi_scan',
+          network: 'testnet',
+          account: 'GDEST',
+          pagingToken: '150',
+        }),
         update: expect.objectContaining({ pagingToken: '150' }),
       }),
     );
+  });
+
+  it('does not let one intent consume a co-located intent cursor', async () => {
+    const intentA: any = {
+      ...intent,
+      id: 'pi_a',
+      memo: '111',
+    };
+    const intentB: any = {
+      ...intent,
+      id: 'pi_b',
+      memo: '222',
+    };
+    // Shared destination: A scans past B's payment (wrong memo) and persists.
+    // B must still cold-start (no cursor of its own) and find its payment.
+    const paymentForB = paymentOp({
+      paging_token: '120',
+      transaction_hash: 'tx_b',
+      amount: '10.0000000',
+    });
+    const paymentForA = paymentOp({
+      paging_token: '130',
+      transaction_hash: 'tx_a',
+      amount: '10.0000000',
+    });
+
+    const cursors = new Map<string, string>();
+    prisma.horizonAccountCursor.findUnique.mockImplementation(
+      async ({ where }: { where: { intentId: string } }) => {
+        const token = cursors.get(where.intentId);
+        return token ? { pagingToken: token } : null;
+      },
+    );
+    prisma.horizonAccountCursor.upsert.mockImplementation(
+      async ({
+        where,
+        create,
+        update,
+      }: {
+        where: { intentId: string };
+        create: { pagingToken: string };
+        update: { pagingToken: string };
+      }) => {
+        cursors.set(where.intentId, update.pagingToken ?? create.pagingToken);
+        return {};
+      },
+    );
+
+    mockAccountPayments({
+      none: [paymentForA, paymentForB],
+    });
+    jest.spyOn(Horizon.Server.prototype, 'transactions').mockReturnValue({
+      transaction: (hash: string) => ({
+        call: async () => ({
+          successful: true,
+          memo_type: 'id',
+          memo: hash === 'tx_a' ? '111' : '222',
+        }),
+      }),
+    } as any);
+
+    const resA = await make().findMatchingPayment(intentA);
+    expect(resA.valid).toBe(true);
+    expect(resA.txHash).toBe('tx_a');
+    expect(cursors.get('pi_a')).toBeDefined();
+    expect(cursors.has('pi_b')).toBe(false);
+
+    // Reset Horizon call tracking; B still has no cursor → DESC cold start.
+    orderCalls = [];
+    cursorCalls = [];
+    mockAccountPayments({
+      none: [paymentForA, paymentForB],
+    });
+    jest.spyOn(Horizon.Server.prototype, 'transactions').mockReturnValue({
+      transaction: (hash: string) => ({
+        call: async () => ({
+          successful: true,
+          memo_type: 'id',
+          memo: hash === 'tx_a' ? '111' : '222',
+        }),
+      }),
+    } as any);
+
+    const resB = await make().findMatchingPayment(intentB);
+    expect(orderCalls[0]).toBe('desc');
+    expect(resB.valid).toBe(true);
+    expect(resB.txHash).toBe('tx_b');
+    expect(cursors.get('pi_b')).toBeDefined();
+    expect(cursors.get('pi_a')).not.toBe(cursors.get('pi_b'));
   });
 
   it('matches on the first DESC page when no cursor and upserts', async () => {

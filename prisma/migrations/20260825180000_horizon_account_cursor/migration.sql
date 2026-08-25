@@ -1,8 +1,10 @@
--- Persist Horizon paging tokens per destination account so payment-intent
--- matching can resume across observer cycles (issue #27).
+-- Persist Horizon paging tokens per payment intent so matching can resume
+-- across observer cycles without one intent consuming another's payments
+-- on a shared destination account (issue #27).
 
 CREATE TABLE "horizon_account_cursor" (
     "id" TEXT NOT NULL,
+    "intentId" TEXT NOT NULL,
     "network" TEXT NOT NULL,
     "account" TEXT NOT NULL,
     "pagingToken" TEXT NOT NULL,
@@ -12,4 +14,6 @@ CREATE TABLE "horizon_account_cursor" (
     CONSTRAINT "horizon_account_cursor_pkey" PRIMARY KEY ("id")
 );
 
-CREATE UNIQUE INDEX "horizon_account_cursor_network_account_key" ON "horizon_account_cursor"("network", "account");
+CREATE UNIQUE INDEX "horizon_account_cursor_intentId_key" ON "horizon_account_cursor"("intentId");
+
+ALTER TABLE "horizon_account_cursor" ADD CONSTRAINT "horizon_account_cursor_intentId_fkey" FOREIGN KEY ("intentId") REFERENCES "payment_intent"("id") ON DELETE CASCADE ON UPDATE CASCADE;

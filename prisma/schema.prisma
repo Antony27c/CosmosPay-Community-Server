@@ -281,6 +281,8 @@ model PaymentIntent {
 
   // Append-only audit trail of status transitions (issue #36).
   transitions PaymentIntentTransition[]
+  // Optional Horizon resume cursor for observer matching (issue #27).
+  horizonCursor HorizonAccountCursor?
 
   @@unique([consumerId, memo]) // idempotency: one intent per (consumer, memo)
   @@index([consumerId])
@@ -308,18 +310,19 @@ model PaymentIntentTransition {
   @@map("payment_intent_transition")
 }
 
-// Horizon paging cursor per (network, destination account). Lets
-// findMatchingPayment resume where the previous observer cycle left off
-// instead of re-scanning from the tip every time (issue #27).
+// Horizon paging cursor keyed by payment intent. Destination accounts are
+// shared across intents (disambiguated by memo), so a per-account cursor would
+// let one intent's scan consume another intent's matching payment (issue #27).
 model HorizonAccountCursor {
-  id          String   @id @default(cuid())
+  id          String        @id @default(cuid())
+  intentId    String        @unique
+  intent      PaymentIntent @relation(fields: [intentId], references: [id], onDelete: Cascade)
   network     String // 'public' | 'testnet'
-  account     String // G...
+  account     String // G... destination scanned
   pagingToken String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 
-  @@unique([network, account])
   @@map("horizon_account_cursor")
 }
 

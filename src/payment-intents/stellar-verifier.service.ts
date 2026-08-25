@@ -86,7 +86,9 @@ export class StellarVerifierService {
    * was reported by the integrator).
    *
    * - Payments with `created_at` before `intent.createdAt` never credit.
-   * - With a persisted Horizon cursor, scans ascending from that token.
+   * - With a persisted Horizon cursor (per intent), scans ascending from that
+   *   token so co-located intents on the same destination cannot consume each
+   *   other's matching payments.
    * - Without a cursor (cold start), scans descending from the tip until
    *   past `intent.createdAt`, paginating so matches beyond a single page
    *   are not lost.
@@ -98,7 +100,7 @@ export class StellarVerifierService {
     pageSize = DEFAULT_PAGE_SIZE,
   ): Promise<VerificationResult> {
     const network = this.network(intent);
-    const saved = await this.loadCursor(network, intent.destination);
+    const saved = await this.loadCursor(intent.id);
     const order: 'asc' | 'desc' = saved ? 'asc' : 'desc';
     let cursor: string | undefined = saved?.pagingToken;
     let lastToken: string | undefined = cursor;
@@ -152,7 +154,7 @@ export class StellarVerifierService {
     }
 
     if (lastToken && lastToken !== saved?.pagingToken) {
-      await this.saveCursor(network, intent.destination, lastToken);
+      await this.saveCursor(intent, lastToken);
     }
 
     return (
@@ -207,23 +209,26 @@ export class StellarVerifierService {
   }
 
   private async loadCursor(
-    network: StellarNetwork,
-    account: string,
+    intentId: string,
   ): Promise<{ pagingToken: string } | null> {
     return this.prisma.horizonAccountCursor.findUnique({
-      where: { network_account: { network, account } },
+      where: { intentId },
       select: { pagingToken: true },
     });
   }
 
   private async saveCursor(
-    network: StellarNetwork,
-    account: string,
+    intent: PaymentIntent,
     pagingToken: string,
   ): Promise<void> {
     await this.prisma.horizonAccountCursor.upsert({
-      where: { network_account: { network, account } },
-      create: { network, account, pagingToken },
+      where: { intentId: intent.id },
+      create: {
+        intentId: intent.id,
+        network: this.network(intent),
+        account: intent.destination,
+        pagingToken,
+      },
       update: { pagingToken },
     });
   }
