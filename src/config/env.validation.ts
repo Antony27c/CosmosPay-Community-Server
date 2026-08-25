@@ -164,6 +164,27 @@ class EnvironmentVariables {
   @Min(1)
   OBSERVER_BATCH_SIZE?: number;
 
+  // --- Request log retention (PII prune) ---
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  REQUEST_LOG_RETENTION_DAYS?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  REQUEST_LOG_PRUNE_INTERVAL_MS?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  REQUEST_LOG_PRUNE_BATCH_SIZE?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  REQUEST_LOG_PRUNE_MAX_PER_CYCLE?: number;
+
   @IsOptional()
   @IsInt()
   @Min(1)

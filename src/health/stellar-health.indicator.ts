@@ -4,11 +4,16 @@ import { HealthIndicatorService } from '@nestjs/terminus';
 import { AppConfig, StellarNetwork } from '../config/configuration';
 import { StellarService } from '../stellar/stellar.service';
 
-const NETWORKS: StellarNetwork[] = ['testnet', 'public'];
+/**
+ * Probe budget for readiness. The normal Horizon timeout (10s) is far above
+ * typical k8s probe timeouts; a slow unused network would flap the pod.
+ */
+export const HORIZON_READINESS_TIMEOUT_MS = 2000;
 
 /**
- * Readiness check against each configured Horizon. Uses StellarService.call()
- * so the probe shares timeout / 503 mapping with the rest of the service.
+ * Readiness check against the deployment's configured Horizon
+ * (`STELLAR_NETWORK`). Uses StellarService.call() so the probe shares 503
+ * mapping with the rest of the service, but with a short timeout and no retry.
  */
 @Injectable()
 export class StellarHealthIndicator {
@@ -19,7 +24,8 @@ export class StellarHealthIndicator {
   ) {}
 
   checks() {
-    return NETWORKS.map((network) => () => this.ping(network));
+    const { network } = this.config.get('stellar', { infer: true });
+    return [() => this.ping(network)];
   }
 
   async ping(network: StellarNetwork) {
@@ -28,6 +34,7 @@ export class StellarHealthIndicator {
     try {
       await this.stellar.call(network, (server) => server.root(), {
         maxAttempts: 1,
+        timeoutMs: HORIZON_READINESS_TIMEOUT_MS,
       });
       return session.up({ network, url });
     } catch (err) {

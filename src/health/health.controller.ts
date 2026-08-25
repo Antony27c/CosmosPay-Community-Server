@@ -34,7 +34,7 @@ export class HealthController {
   @Public()
   @HealthCheck()
   @ApiOperation({
-    summary: 'Readiness probe (database + Horizon per configured network)',
+    summary: 'Readiness probe (database + configured Horizon network)',
   })
   readiness() {
     return this.health.check([

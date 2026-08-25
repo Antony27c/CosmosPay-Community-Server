@@ -113,6 +113,43 @@ describe('validateEnv', () => {
     });
   });
 
+  describe('request log retention', () => {
+    it('rejects REQUEST_LOG_RETENTION_DAYS=abc', () => {
+      expectEnvError(
+        validEnv({ REQUEST_LOG_RETENTION_DAYS: 'abc' }),
+        'REQUEST_LOG_RETENTION_DAYS',
+      );
+    });
+
+    it('accepts REQUEST_LOG_RETENTION_DAYS=0 (prune disabled)', () => {
+      expect(
+        validateEnv(validEnv({ REQUEST_LOG_RETENTION_DAYS: '0' }))
+          .REQUEST_LOG_RETENTION_DAYS,
+      ).toBe(0);
+    });
+
+    it('rejects REQUEST_LOG_PRUNE_INTERVAL_MS=abc', () => {
+      expectEnvError(
+        validEnv({ REQUEST_LOG_PRUNE_INTERVAL_MS: 'abc' }),
+        'REQUEST_LOG_PRUNE_INTERVAL_MS',
+      );
+    });
+
+    it('rejects REQUEST_LOG_PRUNE_BATCH_SIZE=0', () => {
+      expectEnvError(
+        validEnv({ REQUEST_LOG_PRUNE_BATCH_SIZE: '0' }),
+        'REQUEST_LOG_PRUNE_BATCH_SIZE',
+      );
+    });
+
+    it('rejects REQUEST_LOG_PRUNE_MAX_PER_CYCLE=abc', () => {
+      expectEnvError(
+        validEnv({ REQUEST_LOG_PRUNE_MAX_PER_CYCLE: 'abc' }),
+        'REQUEST_LOG_PRUNE_MAX_PER_CYCLE',
+      );
+    });
+  });
+
   describe('payment intent TTL', () => {
     it('rejects PAYMENT_INTENT_TTL_SECONDS=abc', () => {
       expectEnvError(

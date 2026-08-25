@@ -62,7 +62,12 @@ export class StellarObserverService implements OnModuleInit, OnModuleDestroy {
     return this.running;
   }
 
-  /** One reconciliation cycle. Guarded so cycles never overlap. */
+  /**
+   * One reconciliation cycle. `running` normally prevents overlap; the
+   * watchdog may still release it after 2× interval while a hung cycle is
+   * in flight. Concurrent ticks of the same intent stay safe because
+   * `markSucceeded` / `markExpired` are idempotent via the applied guard.
+   */
   async tick(): Promise<void> {
     if (this.running) {
       return;

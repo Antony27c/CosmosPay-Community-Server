@@ -12,6 +12,12 @@ export const OBSERVER_WATCHDOG_MULTIPLIER = 2;
  * Arms a timer that logs and releases `running` if a cycle overruns. Returns
  * a cancel function for the happy path. Uses a generation counter so a late
  * `finally` from the hung cycle cannot clear a newer cycle's lock.
+ *
+ * Releasing the lock does **not** cancel the hung cycle — Horizon I/O has no
+ * AbortSignal, so that work may still be in flight. The next interval tick
+ * can therefore reconcile the same PENDING rows concurrently. That is safe
+ * only because finalize / markSucceeded paths are idempotent (`applied`
+ * guard): at most one winner emits the terminal webhook.
  */
 export function armObserverWatchdog(opts: {
   logger: Logger;

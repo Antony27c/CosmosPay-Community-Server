@@ -179,7 +179,7 @@
             }
           }
         },
-        "summary": "Readiness probe (database + Horizon per configured network)",
+        "summary": "Readiness probe (database + configured Horizon network)",
         "tags": [
           "health"
         ]

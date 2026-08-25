@@ -127,6 +127,7 @@ describe('StellarService.call', () => {
       }),
     ).rejects.toBe(raw);
     expect(sleep).not.toHaveBeenCalled();
+    expect(service.metrics().horizonErrors['404']).toBeUndefined();
   });
 
   it('times out a Horizon that never responds (fake timers)', async () => {

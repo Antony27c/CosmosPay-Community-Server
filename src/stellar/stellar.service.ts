@@ -172,11 +172,11 @@ export class StellarService {
         );
       } catch (err) {
         lastError = err;
-        this.recordHorizonError(err);
-
+        // 404 is a business miss (tx/account not on-chain yet), not infra.
         if (horizonHttpStatus(err) === 404) {
           throw err;
         }
+        this.recordHorizonError(err);
 
         if (isRetryableHorizonError(err) && attempt < maxAttempts) {
           const delay = this.backoffMs(attempt - 1, retryBaseMs);

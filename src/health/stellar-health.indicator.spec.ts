@@ -1,6 +1,10 @@
 import { ServiceUnavailableException } from '@nestjs/common';
 import { HealthIndicatorService } from '@nestjs/terminus';
-import { StellarHealthIndicator } from './stellar-health.indicator';
+import { StellarNetwork } from '../config/configuration';
+import {
+  HORIZON_READINESS_TIMEOUT_MS,
+  StellarHealthIndicator,
+} from './stellar-health.indicator';
 
 describe('StellarHealthIndicator', () => {
   const horizon = {
@@ -8,9 +12,9 @@ describe('StellarHealthIndicator', () => {
     testnet: 'https://horizon.example/testnet',
   };
 
-  function make(call: jest.Mock) {
+  function make(call: jest.Mock, network: StellarNetwork = 'testnet') {
     const stellar = { call } as any;
-    const config = { get: () => ({ horizon }) } as any;
+    const config = { get: () => ({ network, horizon }) } as any;
     return new StellarHealthIndicator(
       new HealthIndicatorService(),
       stellar,
@@ -18,17 +22,18 @@ describe('StellarHealthIndicator', () => {
     );
   }
 
-  it('reports horizon.testnet and horizon.public as up when root() succeeds', async () => {
+  it('reports the probed network as up when root() succeeds', async () => {
     const call = jest.fn().mockResolvedValue({ core_latest_ledger: 1 });
     const indicator = make(call);
 
     const testnet = await indicator.ping('testnet');
-    const pub = await indicator.ping('public');
 
     expect(testnet['horizon.testnet'].status).toBe('up');
-    expect(pub['horizon.public'].status).toBe('up');
-    expect(call).toHaveBeenCalledTimes(2);
-    expect(call.mock.calls[0][2]).toEqual({ maxAttempts: 1 });
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(call.mock.calls[0][2]).toEqual({
+      maxAttempts: 1,
+      timeoutMs: HORIZON_READINESS_TIMEOUT_MS,
+    });
   });
 
   it('reports the network as down when Horizon is unreachable', async () => {
@@ -47,8 +52,8 @@ describe('StellarHealthIndicator', () => {
     );
   });
 
-  it('registers one check per configured network', () => {
-    const indicator = make(jest.fn());
-    expect(indicator.checks()).toHaveLength(2);
+  it('registers one check for the configured STELLAR_NETWORK only', () => {
+    expect(make(jest.fn(), 'testnet').checks()).toHaveLength(1);
+    expect(make(jest.fn(), 'public').checks()).toHaveLength(1);
   });
 });

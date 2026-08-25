@@ -70,9 +70,14 @@ export class SettlementObserverService
     return this.running;
   }
 
-  /** One settlement cycle. Guarded so cycles never overlap. */
+  /**
+   * One settlement cycle. `running` normally prevents overlap; the watchdog
+   * may still release it after 2× interval while a hung cycle is in flight,
+   * so two ticks can then hit the same rows. Finalize paths must stay
+   * idempotent (`applied` + quiet duplicate-hash helpers).
+   */
   async tick(): Promise<void> {
-    if (this.running) return; // never overlap cycles
+    if (this.running) return;
     this.running = true;
     const generation = ++this.cycleGeneration;
     const { batchSize, intervalMs } = this.config.get('observer', {
