@@ -1300,16 +1300,48 @@ paths:
         - products
     get:
       operationId: ProductsController_findAll_v1
-      parameters: []
+      parameters:
+        - name: kind
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - recurring
+              - one_time
+              - link
+        - name: active
+          required: false
+          in: query
+          description: Filter by active flag. Omit to return both active and inactive.
+          schema:
+            type: boolean
+        - name: reference
+          required: false
+          in: query
+          schema:
+            example: sku_pro_monthly
+            type: string
+        - name: take
+          required: false
+          in: query
+          schema:
+            maximum: 100
+            default: 20
+            type: number
+        - name: skip
+          required: false
+          in: query
+          schema:
+            default: 0
+            type: number
       responses:
         "200":
           description: ""
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/ProductEntity"
+                $ref: "#/components/schemas/ProductListEntity"
       summary: List the consumer's products
       tags: *a14
   /v1/products/{id}:
@@ -1361,6 +1393,14 @@ paths:
           in: path
           schema:
             type: string
+        - name: hard
+          required: false
+          in: query
+          description: If true, permanently delete the row. Default soft-deletes
+            (active=false).
+          schema:
+            default: false
+            type: boolean
       responses:
         "200":
           description: ""
@@ -1368,7 +1408,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProductDeletedEntity"
-      summary: Delete a product
+      summary: Soft-delete a product (active=false). Pass ?hard=true to permanently
+        delete.
       tags: *a14
   /v1/customers:
     post:
@@ -3066,10 +3107,12 @@ components:
               - SWAP_SUBMITTED
               - SWAP_SUCCEEDED
               - SWAP_FAILED
+              - SWAP_EXPIRED
               - LIQUIDITY_CREATED
               - LIQUIDITY_SUBMITTED
               - LIQUIDITY_SUCCEEDED
               - LIQUIDITY_FAILED
+              - LIQUIDITY_EXPIRED
       required:
         - url
     WebhookEndpointWithSecretEntity:
@@ -3119,10 +3162,12 @@ components:
               - SWAP_SUBMITTED
               - SWAP_SUCCEEDED
               - SWAP_FAILED
+              - SWAP_EXPIRED
               - LIQUIDITY_CREATED
               - LIQUIDITY_SUBMITTED
               - LIQUIDITY_SUCCEEDED
               - LIQUIDITY_FAILED
+              - LIQUIDITY_EXPIRED
         createdAt:
           format: date-time
           type: string
@@ -3222,10 +3267,12 @@ components:
               - SWAP_SUBMITTED
               - SWAP_SUCCEEDED
               - SWAP_FAILED
+              - SWAP_EXPIRED
               - LIQUIDITY_CREATED
               - LIQUIDITY_SUBMITTED
               - LIQUIDITY_SUCCEEDED
               - LIQUIDITY_FAILED
+              - LIQUIDITY_EXPIRED
     WebhookDeletedEntity:
       type: object
       properties:
@@ -3285,10 +3332,12 @@ components:
             - SWAP_SUBMITTED
             - SWAP_SUCCEEDED
             - SWAP_FAILED
+            - SWAP_EXPIRED
             - LIQUIDITY_CREATED
             - LIQUIDITY_SUBMITTED
             - LIQUIDITY_SUCCEEDED
             - LIQUIDITY_FAILED
+            - LIQUIDITY_EXPIRED
           example: PAYMENT_INTENT_SUCCEEDED
         eventId:
           type: string
@@ -4181,6 +4230,27 @@ components:
         - reference
         - createdAt
         - updatedAt
+    ProductListEntity:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductEntity"
+        total:
+          type: number
+          example: 1
+        take:
+          type: number
+          example: 20
+        skip:
+          type: number
+          example: 0
+      required:
+        - data
+        - total
+        - take
+        - skip
     UpdateProductDto:
       type: object
       properties:

@@ -32,6 +32,7 @@ import { CreateSwapDto } from './dto/create-swap.dto';
 import { QuerySwapsDto } from './dto/query-swaps.dto';
 import { QuoteSwapDto } from './dto/quote-swap.dto';
 import {
+  SWAP_CAN_FAIL_STATUSES,
   SWAP_CAN_SUCCEED_STATUSES,
   SWAP_IN_FLIGHT_STATUSES,
 } from './swap-transitions';
@@ -698,7 +699,7 @@ export class SwapsService {
   ): Promise<{ applied: boolean; swap: Swap }> {
     const { applied, swap } = await this.guardedUpdate(
       id,
-      SWAP_IN_FLIGHT_STATUSES,
+      SWAP_CAN_FAIL_STATUSES,
       { status: 'FAILED' },
     );
     if (applied) await this.emit(username, 'SWAP_FAILED', swap);
@@ -719,12 +720,19 @@ export class SwapsService {
 
   /**
    * Marks EXPIRED only while the row is still in-flight. Never degrades a
-   * settled swap.
+   * settled swap. Emits `SWAP_EXPIRED` when this writer wins the transition.
    */
-  async finalizeExpired(id: string): Promise<{ applied: boolean; swap: Swap }> {
-    return this.guardedUpdate(id, SWAP_IN_FLIGHT_STATUSES, {
-      status: 'EXPIRED',
-    });
+  async finalizeExpired(
+    id: string,
+    username: string,
+  ): Promise<{ applied: boolean; swap: Swap }> {
+    const { applied, swap } = await this.guardedUpdate(
+      id,
+      SWAP_IN_FLIGHT_STATUSES,
+      { status: 'EXPIRED' },
+    );
+    if (applied) await this.emit(username, 'SWAP_EXPIRED', swap);
+    return { applied, swap };
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────────

@@ -629,7 +629,7 @@ describe('LiquidityPoolsService.submit vs observer (issue #32 race)', () => {
     });
     prisma.rows.push(row);
 
-    const result = await service.finalizeExpired(row.id);
+    const result = await service.finalizeExpired(row.id, 'cosmos_u1');
     expect(result.applied).toBe(false);
     expect(row.status).toBe('SUCCEEDED');
     expect(row.sharesReceived).toBe('50');

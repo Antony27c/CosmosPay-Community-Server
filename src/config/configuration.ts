@@ -87,6 +87,8 @@ export interface AppConfig {
     enabled: boolean;
     intervalMs: number;
     batchSize: number;
+    // Extra wait after tx timebounds before a still-unseen hash can expire.
+    expiryGraceMs: number;
   };
   requestLogRetention: {
     // Days to keep RequestLog rows. 0 disables the prune job entirely.
@@ -215,6 +217,10 @@ export default (): AppConfig => ({
     enabled: (process.env.OBSERVER_ENABLED ?? 'true').toLowerCase() !== 'false',
     intervalMs: parseInt(process.env.OBSERVER_INTERVAL_MS ?? '15000', 10),
     batchSize: parseInt(process.env.OBSERVER_BATCH_SIZE ?? '50', 10),
+    expiryGraceMs: parseInt(
+      process.env.OBSERVER_EXPIRY_GRACE_MS ?? '60000',
+      10,
+    ),
   },
   requestLogRetention: {
     // Append-only API access log (ip / userAgent). Pruned so PII is not kept forever.

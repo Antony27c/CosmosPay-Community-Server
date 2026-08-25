@@ -135,12 +135,14 @@ enum WebhookEventType {
   SWAP_SUBMITTED
   SWAP_SUCCEEDED
   SWAP_FAILED
+  SWAP_EXPIRED
 
   // Stellar AMM liquidity pool operations (deposit / withdraw).
   LIQUIDITY_CREATED
   LIQUIDITY_SUBMITTED
   LIQUIDITY_SUCCEEDED
   LIQUIDITY_FAILED
+  LIQUIDITY_EXPIRED
 }
 
 enum WebhookDeliveryStatus {
@@ -571,6 +573,11 @@ model Swap {
 
   expiresAt   DateTime?
 
+  // Settlement observer bookkeeping: last Horizon lookup and consecutive 404s
+  // after expiry+grace (used to expire only on confirmed absence, not blips).
+  lastCheckedAt   DateTime?
+  notFoundStreak  Int       @default(0)
+
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 
@@ -651,6 +658,10 @@ model LiquidityPoolOperation {
   txHash String
 
   expiresAt DateTime?
+
+  // Settlement observer bookkeeping — same meaning as Swap.lastCheckedAt.
+  lastCheckedAt  DateTime?
+  notFoundStreak Int       @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
