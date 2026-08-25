@@ -2,6 +2,17 @@
 
 All notable changes to the Cosmos Pay Community Server are documented here.
 Generated from [Conventional Commits](https://www.conventionalcommits.org) by [git-cliff](https://git-cliff.org).
+## [0.0.10] - 2026-08-25
+
+### Bug Fixes
+- Paginate list, fix OpenAPI shape, soft-delete by default (04ab33d)
+- Stabilize health YAML anchors for CI openapi:check (a11d529)
+- Stop expiring settlements on Horizon blips (576f428)
+- Anchor rescue lookback on expiresAt (8b12bfa)
+
+### Miscellaneous
+- Regenerate OpenAPI for SWAP_EXPIRED / LIQUIDITY_EXPIRED (947a74e)
+
 ## [0.0.9] - 2026-08-24
 
 ### Bug Fixes
