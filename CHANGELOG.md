@@ -2,6 +2,14 @@
 
 All notable changes to the Cosmos Pay Community Server are documented here.
 Generated from [Conventional Commits](https://www.conventionalcommits.org) by [git-cliff](https://git-cliff.org).
+## [0.1.1] - 2026-08-26
+
+### Bug Fixes
+- Consume in-flight withdraws in cost basis (8a117ce)
+- Restore tick() so CI can compile (047e9e2)
+- Serialize withdraw cost basis with a Postgres advisory lock (f4dd289)
+- Emit and QR after withdraw transaction commits (e4a2439)
+
 ## [0.1.0] - 2026-08-25
 
 ### Bug Fixes
@@ -13,11 +21,23 @@ Generated from [Conventional Commits](https://www.conventionalcommits.org) by [g
 - Overlap signing secrets during rotation (73022f5)
 
 ### Bug Fixes
+- SQL aggregation and stroops precision (#21) (eb9c291)
+- Rebase onto upstream main and repair broken observer merge (6d74ff1)
+- Stabilize health YAML anchors for CI openapi:check (503ebea)
 - Repair broken merge of watchdog and expiry safety (e6616dc)
 - Stop emitting unstable YAML anchors (61f7885)
 - Bound findMatchingPayment by time and persist Horizon cursor (387b129)
 - Restore settlement-observer after broken #56 merge (902ff0c)
 - Key Horizon cursor by intentId (8b58bd8)
+
+### Refactor
+- Avoid Number() in asInt helper (1ffdf24)
+
+### Documentation
+- Add EXPLAIN query for index verification (b4a1dec)
+
+### Testing
+- Cover QueryAnalyticsDto validation (from=hola → 400) (b2d2ab9)
 
 ## [0.0.10] - 2026-08-25
 

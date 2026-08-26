@@ -1,6 +1,6 @@
 {
   "name": "comos-pay-community-server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Cosmos Pay — payments microservice (NestJS + Prisma) behind the APISIX gateway",
   "author": "",
   "private": true,
