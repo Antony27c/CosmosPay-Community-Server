@@ -19,6 +19,11 @@ import QRCode from 'qrcode';
 import { AppConfig, StellarNetwork } from '../config/configuration';
 import { GatewayConsumer } from '../common/interfaces/gateway-consumer.interface';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  assertCanAfford,
+  assertTrustline,
+  type HorizonBalance,
+} from '../stellar/stellar-preflight';
 import { StellarService } from '../stellar/stellar.service';
 import type {
   LiquidityPoolOperation,
@@ -97,13 +102,7 @@ interface PoolRecord {
 }
 
 /** Minimal shape of a Horizon account balance entry. */
-interface BalanceEntry {
-  asset_type?: string;
-  asset_code?: string;
-  asset_issuer?: string;
-  liquidity_pool_id?: string;
-  balance?: string;
-}
+type BalanceEntry = HorizonBalance;
 
 /**
  * Stellar AMM liquidity pools. Like swaps, this is **non-custodial**: the
@@ -307,8 +306,18 @@ export class LiquidityPoolsService {
 
     const account = await this.loadAccount(network, dto.source);
     const balances = account.balances as BalanceEntry[];
-    this.assertTrustline(balances, a, dto.source);
-    this.assertTrustline(balances, b, dto.source);
+    assertTrustline(
+      balances,
+      a,
+      dto.source,
+      'it must trust the asset before depositing it into a pool',
+    );
+    assertTrustline(
+      balances,
+      b,
+      dto.source,
+      'it must trust the asset before depositing it into a pool',
+    );
     const hasPoolTrust = balances.some(
       (bal) =>
         bal.asset_type === 'liquidity_pool_shares' &&
@@ -322,7 +331,7 @@ export class LiquidityPoolsService {
     // fee. Fail here with a clear 400 rather than let the network reject the
     // signed tx with op_underfunded.
     const opCount = (hasPoolTrust ? 0 : 1) + 1;
-    this.assertCanAfford(
+    assertCanAfford(
       account,
       balances,
       [
@@ -479,9 +488,9 @@ export class LiquidityPoolsService {
     // the just-received reserves), so we only need the account to keep its XLM
     // minimum reserve plus the tx fee. Clear 400 instead of an on-chain reject.
     const opCount = 1 + (feeA > 0n ? 1 : 0) + (feeB > 0n ? 1 : 0);
-    this.assertCanAfford(
+    assertCanAfford(
       account,
-      account.balances as BalanceEntry[],
+      account.balances,
       [],
       false,
       BigInt(stellarCfg.baseFee) * BigInt(opCount),
@@ -954,74 +963,6 @@ export class LiquidityPoolsService {
       throw new BadRequestException(
         'poolId must be a 64-character lowercase hex liquidity pool id',
       );
-    }
-  }
-
-  /** The pool must be trusted per constituent asset before it can be entered. */
-  private assertTrustline(
-    balances: BalanceEntry[],
-    asset: ResolvedAsset,
-    address: string,
-  ): void {
-    if (asset.code === 'native' || !asset.issuer) return;
-    const trusts = balances.some(
-      (b) => b.asset_code === asset.code && b.asset_issuer === asset.issuer,
-    );
-    if (!trusts) {
-      throw new BadRequestException(
-        `Account ${address} has no trustline for ${asset.code}:${asset.issuer} — ` +
-          'it must trust the asset before depositing it into a pool',
-      );
-    }
-  }
-
-  /**
-   * Asserts the source can afford an operation before we build the XDR: each
-   * issued asset's trustline balance must cover its required amount, and the
-   * native (XLM) balance must cover any native requirement plus the minimum
-   * reserve (including a pending pool-share trustline) and the transaction fee.
-   * Turns an otherwise on-chain op_underfunded into a clear 400.
-   */
-  private assertCanAfford(
-    account: { subentry_count?: number },
-    balances: BalanceEntry[],
-    sides: { asset: ResolvedAsset; required: bigint }[],
-    addingTrustline: boolean,
-    txFeeStroops: bigint,
-  ): void {
-    // Native side: its own requirement + reserve (0.5 XLM per subentry, +1 for a
-    // pending trustline) + the tx fee must all fit within the XLM balance.
-    const nativeReq =
-      sides.find((s) => s.asset.code === 'native' || !s.asset.issuer)
-        ?.required ?? 0n;
-    const nativeBal = toStroops(
-      balances.find((b) => b.asset_type === 'native')?.balance ?? '0',
-    );
-    const subentries =
-      BigInt(account.subentry_count ?? 0) + (addingTrustline ? 1n : 0n);
-    const reserve = (2n + subentries) * 5_000_000n; // 0.5 XLM base reserve/entry
-    if (nativeBal - reserve - txFeeStroops < nativeReq) {
-      throw new BadRequestException(
-        `Insufficient XLM balance: need ${fromStroops(nativeReq)} plus ` +
-          `~${fromStroops(reserve + txFeeStroops)} XLM reserve + network fee, ` +
-          `but the account holds ${fromStroops(nativeBal)} XLM`,
-      );
-    }
-    // Issued assets: the trustline balance must cover deposit + commission.
-    for (const s of sides) {
-      if (s.asset.code === 'native' || !s.asset.issuer) continue;
-      const bal = toStroops(
-        balances.find(
-          (b) =>
-            b.asset_code === s.asset.code && b.asset_issuer === s.asset.issuer,
-        )?.balance ?? '0',
-      );
-      if (bal < s.required) {
-        throw new BadRequestException(
-          `Insufficient ${s.asset.code} balance: need ${fromStroops(s.required)}, ` +
-            `but the account holds ${fromStroops(bal)}`,
-        );
-      }
     }
   }
 

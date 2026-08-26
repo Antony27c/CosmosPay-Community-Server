@@ -16,10 +16,15 @@ import {
 import QRCode from 'qrcode';
 import { AppConfig, StellarNetwork } from '../config/configuration';
 import { GatewayConsumer } from '../common/interfaces/gateway-consumer.interface';
-import {
-  isUniqueViolation,
-} from '../common/prisma-errors';
+import { isUniqueViolation } from '../common/prisma-errors';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  assertCanAfford,
+  assertTrustline,
+  hasTrustline,
+  isNativeAsset,
+  type HorizonBalance,
+} from '../stellar/stellar-preflight';
 import { StellarService } from '../stellar/stellar.service';
 import type {
   Prisma,
@@ -110,6 +115,16 @@ interface PathRecord {
 @Injectable()
 export class SwapsService {
   private readonly logger = new Logger(SwapsService.name);
+  /**
+   * Horizon account of the platform fee wallet, keyed by `(network, CODE:ISSUER)`.
+   * A few seconds is enough to collapse a burst of create()s into one lookup
+   * without serving a stale trustline for long.
+   */
+  private readonly feeWalletAccounts = new Map<
+    string,
+    { expiresAt: number; account: { balances: HorizonBalance[] } }
+  >();
+  private static readonly FEE_WALLET_CACHE_TTL_MS = 15_000;
 
   constructor(
     private readonly config: ConfigService<AppConfig, true>,
@@ -197,6 +212,28 @@ export class SwapsService {
       account,
       address: dto.source,
     });
+
+    // Source must already trust the sold asset, hold the gross sendAmount
+    // (commission included), and keep the XLM minimum reserve + network fee.
+    // Catch op_src_no_trust / op_underfunded / tx_insufficient_balance here.
+    const balances = account.balances as HorizonBalance[];
+    assertTrustline(
+      balances,
+      priced.send,
+      dto.source,
+      'it must trust the asset before selling it',
+    );
+    const opCount = feeStroops > 0n && feeWallet ? 2 : 1;
+    assertCanAfford(
+      account,
+      balances,
+      [{ asset: priced.send, required: toStroops(priced.sendAmount) }],
+      false,
+      BigInt(stellarCfg.baseFee) * BigInt(opCount),
+    );
+    if (feeStroops > 0n && feeWallet) {
+      await this.assertFeeWalletCanReceive(network, feeWallet, priced.send);
+    }
 
     const builder = new TransactionBuilder(account, {
       fee: stellarCfg.baseFee,
@@ -306,10 +343,7 @@ export class SwapsService {
   }
 
   /** Header wins over body; blank strings are treated as absent. */
-  private resolveIdempotencyKey(
-    header?: string,
-    body?: string,
-  ): string | null {
+  private resolveIdempotencyKey(header?: string, body?: string): string | null {
     const raw = (header ?? body)?.trim();
     return raw ? raw : null;
   }
@@ -842,18 +876,64 @@ export class SwapsService {
     dest: ResolvedAsset,
     source: { account: { balances: unknown[] }; address: string },
   ): Promise<void> {
-    if (dest.code === 'native' || !dest.issuer) return;
+    if (isNativeAsset(dest)) return;
     const balances =
       destination === source.address
         ? source.account.balances
         : (await this.loadAccount(network, destination)).balances;
-    const trusts = (balances as Array<Record<string, unknown>>).some(
-      (b) => b.asset_code === dest.code && b.asset_issuer === dest.issuer,
-    );
-    if (!trusts) {
+    if (!hasTrustline(balances as HorizonBalance[], dest)) {
       throw new BadRequestException(
         `Destination ${destination} has no trustline for ${dest.code}:${dest.issuer} — ` +
           'it must trust the asset before it can receive the swap',
+      );
+    }
+  }
+
+  /**
+   * The platform fee payment fails on-chain with `op_no_trust` (or
+   * `op_no_destination` if the wallet is unfunded) and takes the path payment
+   * down with it. That is an operator misconfiguration — 503, not 400 — same
+   * spirit as a missing STELLAR_SWAP_FEE_WALLET. Cached a few seconds per
+   * (network, asset) so a burst of creates does not hammer Horizon.
+   */
+  private async assertFeeWalletCanReceive(
+    network: StellarNetwork,
+    feeWallet: string,
+    send: ResolvedAsset,
+  ): Promise<void> {
+    if (isNativeAsset(send)) return;
+
+    const cacheKey = `${network}:${send.code}:${send.issuer}`;
+    const now = Date.now();
+    const cached = this.feeWalletAccounts.get(cacheKey);
+    let account: { balances: HorizonBalance[] };
+    if (cached && cached.expiresAt > now) {
+      account = cached.account;
+    } else {
+      try {
+        account = await this.stellar.server(network).loadAccount(feeWallet);
+      } catch (error: unknown) {
+        const status = (error as { response?: { status?: number } })?.response
+          ?.status;
+        if (status === 404) {
+          throw new ServiceUnavailableException(
+            `Fee wallet ${feeWallet} does not exist as an account on the ${network} network`,
+          );
+        }
+        this.logger.error('Failed to load fee wallet from Horizon', error);
+        throw new ServiceUnavailableException(
+          'Could not reach the Stellar network',
+        );
+      }
+      this.feeWalletAccounts.set(cacheKey, {
+        expiresAt: now + SwapsService.FEE_WALLET_CACHE_TTL_MS,
+        account,
+      });
+    }
+
+    if (!hasTrustline(account.balances, send)) {
+      throw new ServiceUnavailableException(
+        `Fee wallet ${feeWallet} has no trustline for ${send.code}:${send.issuer}`,
       );
     }
   }

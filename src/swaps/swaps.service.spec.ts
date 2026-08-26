@@ -1,4 +1,8 @@
-import { ConflictException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { Account, Keypair, TransactionBuilder } from '@stellar/stellar-sdk';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { GatewayConsumer } from '../common/interfaces/gateway-consumer.interface';
@@ -584,5 +588,203 @@ describe('SettlementObserverService duplicate txHash (issue #17)', () => {
     expect(terminalEmits(events, 'SWAP_SUCCEEDED')).toHaveLength(1);
     // One Horizon lookup for the shared hash, not one per row.
     expect(stellar.txCall).toHaveBeenCalledTimes(1);
+  });
+});
+
+const nativeBal = (balance: string) => ({
+  asset_type: 'native' as const,
+  balance,
+});
+const usdcBal = (balance: string) => ({
+  asset_type: 'credit_alphanum4' as const,
+  asset_code: 'USDC',
+  asset_issuer: DEST_ISSUER,
+  balance,
+});
+
+const issuedDto = {
+  source: SOURCE,
+  amount: '100',
+  sourceAssetCode: 'USDC',
+  sourceAssetIssuer: DEST_ISSUER,
+  destAssetCode: 'XLM',
+};
+
+function horizonAccount(
+  address: string,
+  balances: Array<Record<string, unknown>>,
+  opts: { subentryCount?: number; sequence?: string } = {},
+) {
+  const account: any = new Account(address, opts.sequence ?? '1');
+  account.balances = balances;
+  account.subentry_count = opts.subentryCount ?? 0;
+  return account;
+}
+
+function horizon404(address: string) {
+  const err: any = new Error(`Account ${address} not found`);
+  err.response = { status: 404 };
+  return err;
+}
+
+describe('SwapsService.create pre-flight (issue #18)', () => {
+  let prisma: ReturnType<typeof createPrisma>;
+  let stellar: ReturnType<typeof makeStellar>;
+  let events: EventEmitter2;
+  let service: SwapsService;
+  let sourceSeq: number;
+
+  const fundedSource = () =>
+    horizonAccount(SOURCE, [nativeBal('100'), usdcBal('1000')], {
+      subentryCount: 1,
+      sequence: String(sourceSeq++),
+    });
+  const fundedFeeWallet = () =>
+    horizonAccount(FEE_WALLET, [nativeBal('100'), usdcBal('0')], {
+      subentryCount: 1,
+    });
+
+  beforeEach(() => {
+    prisma = createPrisma();
+    stellar = makeStellar();
+    events = { emit: jest.fn() } as any;
+    sourceSeq = 1;
+    stellar.loadAccount.mockImplementation(async (address: string) => {
+      if (address === FEE_WALLET) return fundedFeeWallet();
+      return fundedSource();
+    });
+    const config = {
+      get: (key?: string) =>
+        key === 'observer'
+          ? { enabled: false, intervalMs: 15_000, batchSize: 50 }
+          : stellarConfig(),
+    } as any;
+    const webhooks = new WebhookTerminalEmitter(prisma as any, events);
+    service = new SwapsService(config, prisma as any, webhooks, stellar as any);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('returns 400 when the source has no trustline for the sold issued asset', async () => {
+    stellar.loadAccount.mockImplementation(async (address: string) => {
+      if (address === FEE_WALLET) return fundedFeeWallet();
+      return horizonAccount(SOURCE, [nativeBal('100')], { subentryCount: 0 });
+    });
+
+    const err = await service.create(consumer, issuedDto).catch((e) => e);
+
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getStatus()).toBe(400);
+    expect(err.message).toContain(
+      `Account ${SOURCE} has no trustline for USDC:${DEST_ISSUER}`,
+    );
+    expect(prisma.swap.create).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 when the source holds only swapAmount, not the gross sendAmount', async () => {
+    // 50 bps of 100 USDC → fee 0.5, routed swapAmount 99.5. Holding exactly
+    // 99.5 used to build an XDR that later failed with op_underfunded.
+    stellar.loadAccount.mockImplementation(async (address: string) => {
+      if (address === FEE_WALLET) return fundedFeeWallet();
+      return horizonAccount(SOURCE, [nativeBal('100'), usdcBal('99.5')], {
+        subentryCount: 1,
+      });
+    });
+
+    const err = await service.create(consumer, issuedDto).catch((e) => e);
+
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getStatus()).toBe(400);
+    expect(err.message).toMatch(
+      /Insufficient USDC balance: need 100, but the account holds 99\.5/,
+    );
+    expect(prisma.swap.create).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 when source XLM cannot cover reserve + baseFee * 2 (commission on)', async () => {
+    // subentry_count 1 → reserve (2+1)*0.5 = 1.5 XLM; 2 ops × 100 stroops fee.
+    stellar.loadAccount.mockImplementation(async (address: string) => {
+      if (address === FEE_WALLET) return fundedFeeWallet();
+      return horizonAccount(SOURCE, [nativeBal('1'), usdcBal('1000')], {
+        subentryCount: 1,
+      });
+    });
+
+    const err = await service.create(consumer, issuedDto).catch((e) => e);
+
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getStatus()).toBe(400);
+    expect(err.message).toMatch(/Insufficient XLM balance/);
+    expect(err.message).toMatch(/1\.50002 XLM reserve \+ network fee/);
+    expect(err.message).toMatch(/holds 1 XLM/);
+    expect(prisma.swap.create).not.toHaveBeenCalled();
+  });
+
+  it('returns 503 when the fee wallet has no trustline for the source asset', async () => {
+    stellar.loadAccount.mockImplementation(async (address: string) => {
+      if (address === FEE_WALLET) {
+        return horizonAccount(FEE_WALLET, [nativeBal('100')], {
+          subentryCount: 0,
+        });
+      }
+      return fundedSource();
+    });
+
+    const err = await service.create(consumer, issuedDto).catch((e) => e);
+
+    expect(err).toBeInstanceOf(ServiceUnavailableException);
+    expect(err.getStatus()).toBe(503);
+    expect(err.message).toBe(
+      `Fee wallet ${FEE_WALLET} has no trustline for USDC:${DEST_ISSUER}`,
+    );
+    expect(prisma.swap.create).not.toHaveBeenCalled();
+  });
+
+  it('returns 503 when the fee wallet does not exist as an account', async () => {
+    stellar.loadAccount.mockImplementation(async (address: string) => {
+      if (address === FEE_WALLET) throw horizon404(FEE_WALLET);
+      return fundedSource();
+    });
+
+    const err = await service.create(consumer, issuedDto).catch((e) => e);
+
+    expect(err).toBeInstanceOf(ServiceUnavailableException);
+    expect(err.getStatus()).toBe(503);
+    expect(err.message).toBe(
+      `Fee wallet ${FEE_WALLET} does not exist as an account on the testnet network`,
+    );
+    expect(err.message).not.toMatch(/trustline/);
+    expect(prisma.swap.create).not.toHaveBeenCalled();
+  });
+
+  it('loads the fee wallet at most once per (network, asset) across two create()s', async () => {
+    await service.create(consumer, issuedDto, 'key-a');
+    await service.create(consumer, issuedDto, 'key-b');
+
+    const feeWalletLoads = stellar.loadAccount.mock.calls.filter(
+      ([address]) => address === FEE_WALLET,
+    );
+    expect(feeWalletLoads).toHaveLength(1);
+    expect(prisma.swap.create).toHaveBeenCalledTimes(2);
+  });
+
+  it('still builds, persists, and returns XDR + SEP-7 URI + QR for a valid swap', async () => {
+    const result = await service.create(consumer, issuedDto, 'happy');
+
+    expect(prisma.swap.create).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('PENDING');
+    expect(result.sendAmount).toBe('100');
+    expect(result.feeAmount).toBe('0.5');
+    expect(result.swapAmount).toBe('99.5');
+    expect(result.sendAsset).toBe('USDC');
+    expect(result.sendAssetIssuer).toBe(DEST_ISSUER);
+    expect(result.destAsset).toBe('native');
+    expect(result.xdr).toMatch(/^[A-Za-z0-9+/=]+$/);
+    expect(result.uri).toMatch(/^web\+stellar:tx\?xdr=/);
+    expect(result.qr).toBe('data:image/png;base64,qq');
+    expect(result.txHash).toHaveLength(64);
+    expect(terminalEmits(events, 'SWAP_CREATED')).toHaveLength(1);
   });
 });
