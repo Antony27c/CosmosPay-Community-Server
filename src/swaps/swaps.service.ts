@@ -890,20 +890,19 @@ export class SwapsService {
   }
 
   /**
-   * The platform fee payment fails on-chain with `op_no_trust` (or
-   * `op_no_destination` if the wallet is unfunded) and takes the path payment
-   * down with it. That is an operator misconfiguration — 503, not 400 — same
-   * spirit as a missing STELLAR_SWAP_FEE_WALLET. Cached a few seconds per
-   * (network, asset) so a burst of creates does not hammer Horizon.
+   * The platform fee payment fails on-chain with `op_no_trust` (issued asset,
+   * no trustline) or `op_no_destination` (wallet unfunded — including native
+   * XLM, which needs no trustline) and takes the path payment down with it.
+   * That is an operator misconfiguration — 503, not 400 — same spirit as a
+   * missing STELLAR_SWAP_FEE_WALLET. Cached a few seconds per (network, asset)
+   * so a burst of creates does not hammer Horizon.
    */
   private async assertFeeWalletCanReceive(
     network: StellarNetwork,
     feeWallet: string,
     send: ResolvedAsset,
   ): Promise<void> {
-    if (isNativeAsset(send)) return;
-
-    const cacheKey = `${network}:${send.code}:${send.issuer}`;
+    const cacheKey = `${network}:${send.code}:${send.issuer ?? 'native'}`;
     const now = Date.now();
     const cached = this.feeWalletAccounts.get(cacheKey);
     let account: { balances: HorizonBalance[] };

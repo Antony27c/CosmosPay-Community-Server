@@ -759,6 +759,32 @@ describe('SwapsService.create pre-flight (issue #18)', () => {
     expect(prisma.swap.create).not.toHaveBeenCalled();
   });
 
+  it('returns 503 when the fee wallet does not exist and the fee is native XLM', async () => {
+    stellar.loadAccount.mockImplementation(async (address: string) => {
+      if (address === FEE_WALLET) throw horizon404(FEE_WALLET);
+      return horizonAccount(SOURCE, [nativeBal('10000'), usdcBal('0')], {
+        subentryCount: 1,
+        sequence: String(sourceSeq++),
+      });
+    });
+
+    const err = await service
+      .create(consumer, {
+        source: SOURCE,
+        amount: '10',
+        destAssetCode: 'USDC',
+        destAssetIssuer: DEST_ISSUER,
+      })
+      .catch((e) => e);
+
+    expect(err).toBeInstanceOf(ServiceUnavailableException);
+    expect(err.getStatus()).toBe(503);
+    expect(err.message).toBe(
+      `Fee wallet ${FEE_WALLET} does not exist as an account on the testnet network`,
+    );
+    expect(prisma.swap.create).not.toHaveBeenCalled();
+  });
+
   it('loads the fee wallet at most once per (network, asset) across two create()s', async () => {
     await service.create(consumer, issuedDto, 'key-a');
     await service.create(consumer, issuedDto, 'key-b');
