@@ -13,8 +13,91 @@ export interface VerificationResult {
   payer?: string;
 }
 
+/**
+ * Common shape for Horizon payment-like operations after field-name differences
+ * (e.g. create_account's `account`/`funder`/`starting_balance`) are normalized.
+ */
+export type ReceivedPayment = {
+  to: string;
+  /** Base G… account when Horizon also returned `to_muxed` (defensive). */
+  toMuxedBase?: string;
+  from: string;
+  amount: string;
+  assetType: string;
+  assetCode?: string;
+  assetIssuer?: string;
+};
+
 const DEFAULT_PAGE_SIZE = 200;
 const MAX_PAGES = 50;
+
+const GENERIC_NO_MATCH =
+  'No payment in this transaction matches the destination/amount';
+
+/**
+ * Maps a Horizon operation record to a ReceivedPayment, or null when the
+ * operation type cannot fulfill a payment intent.
+ */
+export function normalizeOperation(
+  op: Horizon.ServerApi.OperationRecord,
+): ReceivedPayment | null {
+  // Horizon types `type` as an enum; compare as string to avoid enum/literal lint.
+  const type = String(op.type);
+
+  if (
+    type === 'payment' ||
+    type === 'path_payment_strict_receive' ||
+    type === 'path_payment_strict_send'
+  ) {
+    // Destination asset/amount fields (`amount`, `asset_*`), never source_*.
+    // Structural cast: the three record types share these fields but diverge
+    // on `type`, so an intersection collapses to `never`.
+    const p = op as unknown as {
+      to: string;
+      from: string;
+      amount: string;
+      asset_type: string;
+      asset_code?: string;
+      asset_issuer?: string;
+      to_muxed?: string;
+    };
+    return {
+      to: p.to,
+      toMuxedBase: p.to_muxed ? p.to : undefined,
+      from: p.from,
+      amount: p.amount,
+      assetType: p.asset_type,
+      assetCode: p.asset_code,
+      assetIssuer: p.asset_issuer,
+    };
+  }
+
+  if (type === 'create_account') {
+    const c = op as Horizon.ServerApi.CreateAccountOperationRecord;
+    return {
+      to: c.account,
+      from: c.funder,
+      amount: c.starting_balance,
+      assetType: 'native',
+    };
+  }
+
+  return null;
+}
+
+function formatAsset(
+  assetType: string,
+  code?: string | null,
+  issuer?: string | null,
+): string {
+  if (assetType === 'native') return 'native';
+  return `${code ?? ''}:${issuer ?? ''}`;
+}
+
+function formatIntentAsset(intent: PaymentIntent): string {
+  if (intent.asset === 'native') return 'native';
+  return `${intent.asset}:${intent.assetIssuer ?? ''}`;
+}
 
 /**
  * Confirms that an on-chain Stellar transaction actually fulfills a payment
@@ -65,19 +148,22 @@ export class StellarVerifierService {
     const payments = await this.stellar.call(network, (server) =>
       server.payments().forTransaction(txHash).call(),
     );
-    const match = payments.records.find((op) =>
-      this.paymentMatches(intent, op),
-    );
-    if (!match) {
-      return {
-        valid: false,
-        reason:
-          'No native payment in this transaction matches the destination/amount',
-      };
+
+    let mismatchReason: string | undefined;
+    for (const op of payments.records) {
+      const evaluated = this.evaluatePayment(intent, op);
+      if (evaluated.ok) {
+        return { valid: true, txHash, payer: evaluated.received.from };
+      }
+      if (evaluated.reason) {
+        mismatchReason = evaluated.reason;
+      }
     }
 
-    const payer = (match as Horizon.ServerApi.PaymentOperationRecord).from;
-    return { valid: true, txHash, payer };
+    return {
+      valid: false,
+      reason: mismatchReason ?? GENERIC_NO_MATCH,
+    };
   }
 
   /**
@@ -157,9 +243,7 @@ export class StellarVerifierService {
       await this.saveCursor(intent, lastToken);
     }
 
-    return (
-      matched ?? { valid: false, reason: 'No matching payment found yet' }
-    );
+    return matched ?? { valid: false, reason: 'No matching payment found yet' };
   }
 
   private async fetchPaymentPage(
@@ -188,7 +272,8 @@ export class StellarVerifierService {
     network: StellarNetwork,
     op: Horizon.ServerApi.OperationRecord,
   ): Promise<VerificationResult | undefined> {
-    if (!this.paymentMatches(intent, op)) {
+    const evaluated = this.evaluatePayment(intent, op);
+    if (!evaluated.ok) {
       return undefined;
     }
     const tx = await this.stellar.call(network, (server) =>
@@ -200,8 +285,11 @@ export class StellarVerifierService {
     if (!this.memoMatches(intent, tx.memo_type, tx.memo).ok) {
       return undefined;
     }
-    const payer = (op as Horizon.ServerApi.PaymentOperationRecord).from;
-    return { valid: true, txHash: op.transaction_hash, payer };
+    return {
+      valid: true,
+      txHash: op.transaction_hash,
+      payer: evaluated.received.from,
+    };
   }
 
   private opCreatedAt(op: Horizon.ServerApi.OperationRecord): number {
@@ -236,36 +324,60 @@ export class StellarVerifierService {
   /**
    * A payment to the right destination, in the intent's asset, for the exact
    * amount. The amount check is skipped for open intents (no fixed amount).
+   * When the op is aimed at the destination but asset/amount fail, `reason`
+   * carries an actionable mismatch string for verifyByHash / observer logs.
    */
-  private paymentMatches(
+  private evaluatePayment(
     intent: PaymentIntent,
     op: Horizon.ServerApi.OperationRecord,
-  ): boolean {
-    if (op.type !== 'payment') {
-      return false;
-    }
-    const p = op;
-
-    if (p.to !== intent.destination) {
-      return false;
+  ): { ok: true; received: ReceivedPayment } | { ok: false; reason?: string } {
+    const received = normalizeOperation(op);
+    if (!received) {
+      return { ok: false };
     }
 
-    // Asset must match: native, or exact code + issuer.
-    if (intent.asset === 'native') {
-      if (p.asset_type !== 'native') return false;
-    } else if (
-      p.asset_code !== intent.asset ||
-      p.asset_issuer !== intent.assetIssuer
+    if (!this.destinationMatches(intent, received)) {
+      return { ok: false };
+    }
+
+    const receivedAsset = formatAsset(
+      received.assetType,
+      received.assetCode,
+      received.assetIssuer,
+    );
+    const expectedAsset = formatIntentAsset(intent);
+    if (receivedAsset !== expectedAsset) {
+      return {
+        ok: false,
+        reason: `asset mismatch (received ${receivedAsset}, expected ${expectedAsset})`,
+      };
+    }
+
+    if (
+      intent.amount != null &&
+      Number(received.amount) !== Number(intent.amount)
     ) {
-      return false;
+      return {
+        ok: false,
+        reason: `amount mismatch (received ${received.amount}, expected ${intent.amount})`,
+      };
     }
 
-    // Exact amount only when the intent fixed one.
-    if (intent.amount != null && Number(p.amount) !== Number(intent.amount)) {
-      return false;
-    }
+    return { ok: true, received };
+  }
 
-    return true;
+  private destinationMatches(
+    intent: PaymentIntent,
+    received: ReceivedPayment,
+  ): boolean {
+    if (received.to === intent.destination) return true;
+    if (
+      received.toMuxedBase != null &&
+      received.toMuxedBase === intent.destination
+    ) {
+      return true;
+    }
+    return false;
   }
 
   /**

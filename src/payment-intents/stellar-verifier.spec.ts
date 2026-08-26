@@ -2,6 +2,9 @@ import { Horizon } from '@stellar/stellar-sdk';
 import { ServiceUnavailableException } from '@nestjs/common';
 import { StellarService } from '../stellar/stellar.service';
 import { StellarVerifierService } from './stellar-verifier.service';
+import pathPaymentStrictReceiveFixture from './__fixtures__/path_payment_strict_receive.json';
+import pathPaymentStrictSendFixture from './__fixtures__/path_payment_strict_send.json';
+import createAccountFixture from './__fixtures__/create_account.json';
 
 describe('StellarVerifierService.verifyByHash', () => {
   const intent: any = {
@@ -47,10 +50,11 @@ describe('StellarVerifierService.verifyByHash', () => {
     } as any);
   }
 
-  const nativeTo = (to: string, amount: string) => ({
+  const nativeTo = (to: string, amount: string, from = 'GPAYER') => ({
     type: 'payment',
     asset_type: 'native',
     to,
+    from,
     amount,
   });
 
@@ -74,13 +78,16 @@ describe('StellarVerifierService.verifyByHash', () => {
   });
 
   it('rejects when no payment matches destination/amount', async () => {
+    // Destination match with wrong amount → actionable reason (no longer the
+    // old "No native payment…" generic). Wrong-destination-only still uses
+    // the generic message — covered separately below.
     mockHorizon({ successful: true, memo_type: 'id', memo: '123456789' }, [
       nativeTo('GOTHER', '25.5'),
       nativeTo('GDEST', '10'),
     ]);
     const res = await make().verifyByHash(intent, 'c'.repeat(64));
     expect(res.valid).toBe(false);
-    expect(res.reason).toMatch(/No native payment/);
+    expect(res.reason).toBe('amount mismatch (received 10, expected 25.5)');
   });
 
   it('marks a failed on-chain tx as not valid', async () => {
@@ -105,6 +112,116 @@ describe('StellarVerifierService.verifyByHash', () => {
     await expect(
       make().verifyByHash(intent, 'e'.repeat(64)),
     ).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+
+  it('returns exact amount mismatch reason when destination matches', async () => {
+    mockHorizon({ successful: true, memo_type: 'id', memo: '123456789' }, [
+      nativeTo('GDEST', '10'),
+    ]);
+    const res = await make().verifyByHash(intent, 'f'.repeat(64));
+    expect(res.valid).toBe(false);
+    expect(res.reason).toBe('amount mismatch (received 10, expected 25.5)');
+  });
+
+  it('returns generic reason when no op targets the destination', async () => {
+    mockHorizon({ successful: true, memo_type: 'id', memo: '123456789' }, [
+      nativeTo('GOTHER', '25.5'),
+    ]);
+    const res = await make().verifyByHash(intent, 'g'.repeat(64));
+    expect(res.valid).toBe(false);
+    expect(res.reason).toBe(
+      'No payment in this transaction matches the destination/amount',
+    );
+  });
+
+  it('accepts path_payment_strict_receive from a real Horizon fixture', async () => {
+    const fixture = pathPaymentStrictReceiveFixture;
+    const pathIntent: any = {
+      ...intent,
+      destination: fixture.to,
+      amount: fixture.amount,
+      asset: fixture.asset_code,
+      assetIssuer: fixture.asset_issuer,
+    };
+    mockHorizon({ successful: true, memo_type: 'id', memo: '123456789' }, [
+      fixture,
+    ]);
+    const res = await make().verifyByHash(pathIntent, fixture.transaction_hash);
+    expect(res.valid).toBe(true);
+    expect(res.payer).toBe(fixture.from);
+  });
+
+  it('accepts path_payment_strict_send from a real Horizon fixture', async () => {
+    const fixture = pathPaymentStrictSendFixture;
+    const pathIntent: any = {
+      ...intent,
+      destination: fixture.to,
+      amount: fixture.amount,
+      asset: 'native',
+      assetIssuer: null,
+    };
+    mockHorizon({ successful: true, memo_type: 'id', memo: '123456789' }, [
+      fixture,
+    ]);
+    const res = await make().verifyByHash(pathIntent, fixture.transaction_hash);
+    expect(res.valid).toBe(true);
+    expect(res.payer).toBe(fixture.from);
+  });
+
+  it('accepts create_account and sets payer from funder', async () => {
+    const fixture = createAccountFixture;
+    const createIntent: any = {
+      ...intent,
+      destination: fixture.account,
+      amount: fixture.starting_balance,
+      asset: 'native',
+      assetIssuer: null,
+    };
+    mockHorizon({ successful: true, memo_type: 'id', memo: '123456789' }, [
+      fixture,
+    ]);
+    const res = await make().verifyByHash(
+      createIntent,
+      fixture.transaction_hash,
+    );
+    expect(res.valid).toBe(true);
+    expect(res.payer).toBe(fixture.funder);
+    expect(res.payer).toBeDefined();
+  });
+
+  it('accepts a payment with to_muxed when to is the base destination', async () => {
+    mockHorizon({ successful: true, memo_type: 'id', memo: '123456789' }, [
+      {
+        ...nativeTo('GDEST', '25.5000000', 'GPAYER'),
+        to_muxed: 'MBASENOTHINGJUSTDEFENSIVE000000000000000000000000000000000',
+        to_muxed_id: '1',
+      },
+    ]);
+    const res = await make().verifyByHash(intent, 'h'.repeat(64));
+    expect(res.valid).toBe(true);
+    expect(res.payer).toBe('GPAYER');
+  });
+
+  it('verifyByHash payer comes from normalizeOperation (not PaymentOperationRecord cast)', async () => {
+    const fixture = createAccountFixture;
+    const createIntent: any = {
+      ...intent,
+      destination: fixture.account,
+      amount: fixture.starting_balance,
+      asset: 'native',
+      assetIssuer: null,
+    };
+    // create_account has no `from`; only funder — proves payer is normalized.
+    expect((fixture as { from?: string }).from).toBeUndefined();
+    expect(fixture.funder).toBeDefined();
+    mockHorizon({ successful: true, memo_type: 'id', memo: '123456789' }, [
+      fixture,
+    ]);
+    const res = await make().verifyByHash(
+      createIntent,
+      fixture.transaction_hash,
+    );
+    expect(res.payer).toBe(fixture.funder);
   });
 });
 
@@ -437,5 +554,33 @@ describe('StellarVerifierService.findMatchingPayment', () => {
     const res = await make().findMatchingPayment(intent);
     expect(res.valid).toBe(false);
     expect(res.reason).toBe('Destination account not found');
+  });
+
+  it('findMatchingPayment payer comes from normalizeOperation (create_account funder)', async () => {
+    const fixture = createAccountFixture;
+    expect((fixture as { from?: string }).from).toBeUndefined();
+    const createIntent: any = {
+      ...intent,
+      destination: fixture.account,
+      amount: fixture.starting_balance,
+      asset: 'native',
+      assetIssuer: null,
+      createdAt: new Date('2026-08-01T00:00:00.000Z'),
+    };
+    mockSuccessfulTx();
+    mockAccountPayments({
+      none: [
+        {
+          ...fixture,
+          paging_token: '400',
+          created_at: '2026-08-25T13:00:00.000Z',
+        },
+      ],
+    });
+
+    const res = await make().findMatchingPayment(createIntent);
+    expect(res.valid).toBe(true);
+    expect(res.payer).toBe(fixture.funder);
+    expect(res.txHash).toBe(fixture.transaction_hash);
   });
 });

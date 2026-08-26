@@ -1,0 +1,39 @@
+{
+  "_links": {
+    "self": {
+      "href": "https://horizon-testnet.stellar.org/operations/18677270877057025"
+    },
+    "transaction": {
+      "href": "https://horizon-testnet.stellar.org/transactions/83ab9e7170e64e67a892a636589861c56ffd73ba30f7180372e59da50e742b4a"
+    },
+    "effects": {
+      "href": "https://horizon-testnet.stellar.org/operations/18677270877057025/effects"
+    },
+    "succeeds": {
+      "href": "https://horizon-testnet.stellar.org/effects?order=desc&cursor=18677270877057025"
+    },
+    "precedes": {
+      "href": "https://horizon-testnet.stellar.org/effects?order=asc&cursor=18677270877057025"
+    }
+  },
+  "id": "18677270877057025",
+  "paging_token": "18677270877057025",
+  "transaction_successful": true,
+  "source_account": "GBYN3NJVNWPKKVCCKCMZZUTPD5SBNNPCAP35LGYALPTIGV35RO5GA7QH",
+  "type": "path_payment_strict_send",
+  "type_i": 13,
+  "created_at": "2026-08-26T17:50:22Z",
+  "transaction_hash": "83ab9e7170e64e67a892a636589861c56ffd73ba30f7180372e59da50e742b4a",
+  "asset_type": "native",
+  "from": "GBYN3NJVNWPKKVCCKCMZZUTPD5SBNNPCAP35LGYALPTIGV35RO5GA7QH",
+  "to": "GA5NO5PZMCFAI46FJ7AFJAJSYU7QQV4TBEYJXGWPVCTFQAWPHPJ7LDGU",
+  "amount": "1.0000000",
+  "path": [
+    {
+      "asset_type": "native"
+    }
+  ],
+  "source_amount": "1.0000000",
+  "destination_min": "1.0000000",
+  "source_asset_type": "native"
+}

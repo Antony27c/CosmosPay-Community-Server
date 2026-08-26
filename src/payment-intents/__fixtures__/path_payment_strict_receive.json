@@ -1,0 +1,37 @@
+{
+  "_links": {
+    "self": {
+      "href": "https://horizon-testnet.stellar.org/operations/18677163502866433"
+    },
+    "transaction": {
+      "href": "https://horizon-testnet.stellar.org/transactions/5a43157504a4de7f89a5ea33ea11cba5f41ef2cf98e0339c579afa5725d2eff9"
+    },
+    "effects": {
+      "href": "https://horizon-testnet.stellar.org/operations/18677163502866433/effects"
+    },
+    "succeeds": {
+      "href": "https://horizon-testnet.stellar.org/effects?order=desc&cursor=18677163502866433"
+    },
+    "precedes": {
+      "href": "https://horizon-testnet.stellar.org/effects?order=asc&cursor=18677163502866433"
+    }
+  },
+  "id": "18677163502866433",
+  "paging_token": "18677163502866433",
+  "transaction_successful": true,
+  "source_account": "GC47X2P5FJQRQVN3HU3HLGY5GTG764F27XCSBQDHUAUJHD6IRKCUO72F",
+  "type": "path_payment_strict_receive",
+  "type_i": 2,
+  "created_at": "2026-08-26T17:48:17Z",
+  "transaction_hash": "5a43157504a4de7f89a5ea33ea11cba5f41ef2cf98e0339c579afa5725d2eff9",
+  "asset_type": "credit_alphanum4",
+  "asset_code": "USDC",
+  "asset_issuer": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+  "from": "GC47X2P5FJQRQVN3HU3HLGY5GTG764F27XCSBQDHUAUJHD6IRKCUO72F",
+  "to": "GC47X2P5FJQRQVN3HU3HLGY5GTG764F27XCSBQDHUAUJHD6IRKCUO72F",
+  "amount": "1034.0000000",
+  "path": [],
+  "source_amount": "589.1273422",
+  "source_max": "589.1273422",
+  "source_asset_type": "native"
+}

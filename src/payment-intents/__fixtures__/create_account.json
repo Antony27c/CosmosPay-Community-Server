@@ -1,0 +1,30 @@
+{
+  "_links": {
+    "self": {
+      "href": "https://horizon-testnet.stellar.org/operations/18677592999596033"
+    },
+    "transaction": {
+      "href": "https://horizon-testnet.stellar.org/transactions/745bad4cd5142b9de996770c0940625fa2641aad9cf9cea6e5e7df74edb74b03"
+    },
+    "effects": {
+      "href": "https://horizon-testnet.stellar.org/operations/18677592999596033/effects"
+    },
+    "succeeds": {
+      "href": "https://horizon-testnet.stellar.org/effects?order=desc&cursor=18677592999596033"
+    },
+    "precedes": {
+      "href": "https://horizon-testnet.stellar.org/effects?order=asc&cursor=18677592999596033"
+    }
+  },
+  "id": "18677592999596033",
+  "paging_token": "18677592999596033",
+  "transaction_successful": true,
+  "source_account": "GDN5GN4FLFWYZHXQCOGGPBR4PS4RLYTZ76MVBMCD4ZHDQNO4JI3S3NRE",
+  "type": "create_account",
+  "type_i": 0,
+  "created_at": "2026-08-26T17:56:38Z",
+  "transaction_hash": "745bad4cd5142b9de996770c0940625fa2641aad9cf9cea6e5e7df74edb74b03",
+  "starting_balance": "5.0000000",
+  "funder": "GDN5GN4FLFWYZHXQCOGGPBR4PS4RLYTZ76MVBMCD4ZHDQNO4JI3S3NRE",
+  "account": "GC7DILFYZRW3DML5FRN5BIOPH7O5CIVVSKCYUXI7NOBE6S2RU7UBBQI2"
+}

@@ -176,6 +176,9 @@ export class StellarObserverService implements OnModuleInit, OnModuleDestroy {
       );
       return true;
     }
+    if (result.reason) {
+      this.logger.debug(`Intent ${intent.id} not matched: ${result.reason}`);
+    }
     return false;
   }
 }
