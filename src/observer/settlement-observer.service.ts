@@ -72,7 +72,12 @@ export class SettlementObserverService
     if (this.timer) clearInterval(this.timer);
   }
 
-  private async tick(): Promise<void> {
+  /** True while a reconciliation cycle is in flight. Exposed for tests. */
+  isRunning(): boolean {
+    return this.running;
+  }
+
+  async tick(): Promise<void> {
     if (this.running) return; // never overlap cycles
     this.running = true;
     try {
