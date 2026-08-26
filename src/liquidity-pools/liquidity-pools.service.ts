@@ -54,6 +54,9 @@ import {
 
 const MAX_UINT64 = 18446744073709551615n;
 
+/** Horizon pool lookups per `positions()` call, so a 40-trustline account does not stampede. */
+const POSITION_FETCH_CONCURRENCY = 5;
+
 /**
  * On-chain MEMO_TEXT stamped on operations that collect the platform commission
  * when the caller did not supply their own MEMO_ID — so the commission is
@@ -193,35 +196,44 @@ export class LiquidityPoolsService {
     const shares = (account.balances as BalanceEntry[]).filter(
       (b) => b.asset_type === 'liquidity_pool_shares' && b.liquidity_pool_id,
     );
-    const data = await Promise.all(
-      shares.map(async (entry) => {
-        const pool = await this.fetchPool(network, entry.liquidity_pool_id!);
-        if (!pool) return null;
-        const held = toStroops(entry.balance ?? '0');
-        const total = toStroops(pool.total_shares);
-        const reserves = pool.reserves.map((r) => this.parseReserve(r));
-        return {
-          poolId: pool.id,
-          shares: fromStroops(held),
-          totalShares: pool.total_shares,
-          shareOfPoolBps: total > 0n ? Number((held * 10_000n) / total) : 0,
-          reserves,
-          redeemable: reserves.map((r) => ({
-            ...r,
-            amount:
-              total > 0n
-                ? fromStroops(
-                    proportionalShare(held, total, toStroops(r.amount)),
-                  )
-                : '0',
-          })),
-        };
-      }),
-    );
+    const data: LiquidityPositionListEntity['data'] = [];
+    for (let i = 0; i < shares.length; i += POSITION_FETCH_CONCURRENCY) {
+      const batch = shares.slice(i, i + POSITION_FETCH_CONCURRENCY);
+      const settled = await Promise.allSettled(
+        batch.map(async (entry) => {
+          const pool = await this.fetchPool(network, entry.liquidity_pool_id!);
+          if (!pool) return null;
+          const held = toStroops(entry.balance ?? '0');
+          const total = toStroops(pool.total_shares);
+          const reserves = pool.reserves.map((r) => this.parseReserve(r));
+          return {
+            poolId: pool.id,
+            shares: fromStroops(held),
+            totalShares: pool.total_shares,
+            shareOfPoolBps: total > 0n ? Number((held * 10_000n) / total) : 0,
+            reserves,
+            redeemable: reserves.map((r) => ({
+              ...r,
+              amount:
+                total > 0n
+                  ? fromStroops(
+                      proportionalShare(held, total, toStroops(r.amount)),
+                    )
+                  : '0',
+            })),
+          };
+        }),
+      );
+      for (const result of settled) {
+        if (result.status === 'fulfilled' && result.value !== null) {
+          data.push(result.value);
+        }
+      }
+    }
     return {
       account: query.account,
       network,
-      data: data.filter((p) => p !== null),
+      data,
     };
   }
 
@@ -481,7 +493,7 @@ export class LiquidityPoolsService {
     const opCount = 1 + (feeA > 0n ? 1 : 0) + (feeB > 0n ? 1 : 0);
     this.assertCanAfford(
       account,
-      account.balances as BalanceEntry[],
+      account.balances,
       [],
       false,
       BigInt(stellarCfg.baseFee) * BigInt(opCount),
@@ -1028,9 +1040,12 @@ export class LiquidityPoolsService {
   /**
    * Average-cost basis of the shares `source` still holds in `poolId`, derived
    * from our own SUCCEEDED deposits (which recorded the shares + amounts at
-   * settlement) and withdrawals. Only deposits with a captured `sharesReceived`
-   * count — positions opened outside Cosmos Pay have no basis and are taxed
-   * nothing. All values are stroop bigints.
+   * settlement) and withdrawals. Deposits count only once they have settled;
+   * withdrawals also consume remaining shares while they are still in-flight
+   * (`PENDING` / `SUBMITTED`) so two unsigned withdraws cannot both tax the
+   * same covered shares. Only deposits with a captured `sharesReceived` count
+   * — positions opened outside Cosmos Pay have no basis and are taxed nothing.
+   * All values are stroop bigints.
    */
   private async costBasis(
     consumerId: string,
@@ -1043,7 +1058,18 @@ export class LiquidityPoolsService {
     costB: bigint;
   }> {
     const ops = await this.prisma.liquidityPoolOperation.findMany({
-      where: { consumerId, source, poolId, status: 'SUCCEEDED' },
+      where: {
+        consumerId,
+        source,
+        poolId,
+        OR: [
+          { kind: 'DEPOSIT', status: 'SUCCEEDED' },
+          {
+            kind: 'WITHDRAW',
+            status: { in: ['SUCCEEDED', ...LP_IN_FLIGHT_STATUSES] },
+          },
+        ],
+      },
       select: {
         kind: true,
         shares: true,
