@@ -72,12 +72,15 @@ export class SettlementObserverService
     if (this.timer) clearInterval(this.timer);
   }
 
-  private async tick(): Promise<void> {
+  /** True while a reconciliation cycle is in flight. Exposed for tests. */
+  isRunning(): boolean {
+    return this.running;
+  }
+
+  async tick(): Promise<void> {
     if (this.running) return; // never overlap cycles
     this.running = true;
     try {
-      reconciled += await this.reconcileSwaps(batchSize);
-      reconciled += await this.reconcileLiquidity(batchSize);
       const { batchSize } = this.config.get('observer', { infer: true });
       await this.reconcileSwaps(batchSize);
       await this.reconcileLiquidity(batchSize);
@@ -252,7 +255,6 @@ export class SettlementObserverService
         }
       }
     }
-    return reconciled;
   }
 
   /**
@@ -412,8 +414,7 @@ function horizonMessage(err: unknown): string {
 
 function isRetryableHorizonStatus(status: number | undefined): boolean {
   return (
-    status === 429 ||
-    (status !== undefined && status >= 500 && status <= 599)
+    status === 429 || (status !== undefined && status >= 500 && status <= 599)
   );
 }
 

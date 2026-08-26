@@ -118,6 +118,8 @@ interface BalanceEntry {
 @Injectable()
 export class LiquidityPoolsService {
   private readonly logger = new Logger(LiquidityPoolsService.name);
+  /** Serializes cost-basis reads + persist per (consumer, source, pool). */
+  private readonly withdrawLocks = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly config: ConfigService<AppConfig, true>,
@@ -197,6 +199,7 @@ export class LiquidityPoolsService {
       (b) => b.asset_type === 'liquidity_pool_shares' && b.liquidity_pool_id,
     );
     const data: LiquidityPositionListEntity['data'] = [];
+    let horizonFailures = 0;
     for (let i = 0; i < shares.length; i += POSITION_FETCH_CONCURRENCY) {
       const batch = shares.slice(i, i + POSITION_FETCH_CONCURRENCY);
       const settled = await Promise.allSettled(
@@ -227,8 +230,17 @@ export class LiquidityPoolsService {
       for (const result of settled) {
         if (result.status === 'fulfilled' && result.value !== null) {
           data.push(result.value);
+        } else if (result.status === 'rejected') {
+          horizonFailures += 1;
         }
       }
+    }
+    // One bad pool is omitted; a total Horizon outage must not look like
+    // "this account has no positions".
+    if (shares.length > 0 && horizonFailures === shares.length) {
+      throw new ServiceUnavailableException(
+        'Could not reach the Stellar network',
+      );
     }
     return {
       account: query.account,
@@ -458,108 +470,112 @@ export class LiquidityPoolsService {
     // Plan commission — charged ONLY on the gain (redeemed − proportional cost
     // basis), and only for shares whose cost basis we recorded from deposits
     // made through Cosmos Pay. Shares with no known basis are taxed nothing.
-    const feeBps = this.resolveSwapFeeBps(consumer);
-    const feeWallet = this.feeWallet();
-    let feeA = 0n;
-    let feeB = 0n;
-    if (feeBps > 0) {
-      const basis = await this.costBasis(local.id, dto.source, dto.poolId);
-      const fees = computeWithdrawCommission({
-        shares,
-        totalShares: total,
-        remainingShares: basis.remainingShares,
-        depositedShares: basis.depositedShares,
-        costA: basis.costA,
-        costB: basis.costB,
-        reserveA: toStroops(resA.amount),
-        reserveB: toStroops(resB.amount),
+    // Serialize costBasis → persist so two concurrent withdraws cannot both
+    // observe the same remainingShares before either row is PENDING.
+    return this.withWithdrawLock(local.id, dto.source, dto.poolId, async () => {
+      const feeBps = this.resolveSwapFeeBps(consumer);
+      const feeWallet = this.feeWallet();
+      let feeA = 0n;
+      let feeB = 0n;
+      if (feeBps > 0) {
+        const basis = await this.costBasis(local.id, dto.source, dto.poolId);
+        const fees = computeWithdrawCommission({
+          shares,
+          totalShares: total,
+          remainingShares: basis.remainingShares,
+          depositedShares: basis.depositedShares,
+          costA: basis.costA,
+          costB: basis.costB,
+          reserveA: toStroops(resA.amount),
+          reserveB: toStroops(resB.amount),
+          slippageBps,
+          feeBps,
+        });
+        feeA = fees.feeA;
+        feeB = fees.feeB;
+      }
+      if (feeA + feeB > 0n && !feeWallet) {
+        throw new ServiceUnavailableException(
+          'A swap commission is configured (STELLAR_SWAP_FEE_BPS) but STELLAR_SWAP_FEE_WALLET is not set',
+        );
+      }
+
+      const stellarCfg = this.config.get('stellar', { infer: true });
+
+      // Pre-flight: the withdraw itself funds the fee payments (they come out of
+      // the just-received reserves), so we only need the account to keep its XLM
+      // minimum reserve plus the tx fee. Clear 400 instead of an on-chain reject.
+      const opCount = 1 + (feeA > 0n ? 1 : 0) + (feeB > 0n ? 1 : 0);
+      this.assertCanAfford(
+        account,
+        account.balances,
+        [],
+        false,
+        BigInt(stellarCfg.baseFee) * BigInt(opCount),
+      );
+
+      const builder = new TransactionBuilder(account, {
+        fee: stellarCfg.baseFee,
+        networkPassphrase: this.stellar.passphrase(network),
+      }).addOperation(
+        Operation.liquidityPoolWithdraw({
+          liquidityPoolId: dto.poolId,
+          amount: fromStroops(shares),
+          minAmountA: fromStroops(minA),
+          minAmountB: fromStroops(minB),
+        }),
+      );
+      // Collect the plan commission out of the just-received reserves.
+      if (feeA > 0n && feeWallet) {
+        builder.addOperation(
+          Operation.payment({
+            destination: feeWallet,
+            asset: this.assetFromReserve(resA),
+            amount: fromStroops(feeA),
+          }),
+        );
+      }
+      if (feeB > 0n && feeWallet) {
+        builder.addOperation(
+          Operation.payment({
+            destination: feeWallet,
+            asset: this.assetFromReserve(resB),
+            amount: fromStroops(feeB),
+          }),
+        );
+      }
+      this.addMemo(builder, memo, feeA + feeB > 0n);
+
+      const tx = builder.setTimeout(stellarCfg.timeoutSeconds).build();
+      const op = await this.persist(consumer, {
+        consumerId: local.id,
+        kind: 'WITHDRAW' as const,
+        network,
+        source: dto.source,
+        poolId: dto.poolId,
+        assetA: resA.asset,
+        assetAIssuer: resA.issuer,
+        assetB: resB.asset,
+        assetBIssuer: resB.issuer,
+        amountA: fromStroops(minA),
+        amountB: fromStroops(minB),
+        shares: fromStroops(shares),
+        minPrice: null,
+        maxPrice: null,
         slippageBps,
         feeBps,
+        feeAmountA: fromStroops(feeA),
+        feeAmountB: fromStroops(feeB),
+        feeWallet: feeA + feeB > 0n ? feeWallet : null,
+        tx,
+        timeoutSeconds: stellarCfg.timeoutSeconds,
       });
-      feeA = fees.feeA;
-      feeB = fees.feeB;
-    }
-    if (feeA + feeB > 0n && !feeWallet) {
-      throw new ServiceUnavailableException(
-        'A swap commission is configured (STELLAR_SWAP_FEE_BPS) but STELLAR_SWAP_FEE_WALLET is not set',
+      this.logger.log(
+        `Created LP withdraw ${op.id}: ${fromStroops(shares)} shares of pool ` +
+          `${dto.poolId.slice(0, 8)}… (consumer=${consumer.username}, network=${network})`,
       );
-    }
-
-    const stellarCfg = this.config.get('stellar', { infer: true });
-
-    // Pre-flight: the withdraw itself funds the fee payments (they come out of
-    // the just-received reserves), so we only need the account to keep its XLM
-    // minimum reserve plus the tx fee. Clear 400 instead of an on-chain reject.
-    const opCount = 1 + (feeA > 0n ? 1 : 0) + (feeB > 0n ? 1 : 0);
-    this.assertCanAfford(
-      account,
-      account.balances,
-      [],
-      false,
-      BigInt(stellarCfg.baseFee) * BigInt(opCount),
-    );
-
-    const builder = new TransactionBuilder(account, {
-      fee: stellarCfg.baseFee,
-      networkPassphrase: this.stellar.passphrase(network),
-    }).addOperation(
-      Operation.liquidityPoolWithdraw({
-        liquidityPoolId: dto.poolId,
-        amount: fromStroops(shares),
-        minAmountA: fromStroops(minA),
-        minAmountB: fromStroops(minB),
-      }),
-    );
-    // Collect the plan commission out of the just-received reserves.
-    if (feeA > 0n && feeWallet) {
-      builder.addOperation(
-        Operation.payment({
-          destination: feeWallet,
-          asset: this.assetFromReserve(resA),
-          amount: fromStroops(feeA),
-        }),
-      );
-    }
-    if (feeB > 0n && feeWallet) {
-      builder.addOperation(
-        Operation.payment({
-          destination: feeWallet,
-          asset: this.assetFromReserve(resB),
-          amount: fromStroops(feeB),
-        }),
-      );
-    }
-    this.addMemo(builder, memo, feeA + feeB > 0n);
-
-    const tx = builder.setTimeout(stellarCfg.timeoutSeconds).build();
-    const op = await this.persist(consumer, {
-      consumerId: local.id,
-      kind: 'WITHDRAW' as const,
-      network,
-      source: dto.source,
-      poolId: dto.poolId,
-      assetA: resA.asset,
-      assetAIssuer: resA.issuer,
-      assetB: resB.asset,
-      assetBIssuer: resB.issuer,
-      amountA: fromStroops(minA),
-      amountB: fromStroops(minB),
-      shares: fromStroops(shares),
-      minPrice: null,
-      maxPrice: null,
-      slippageBps,
-      feeBps,
-      feeAmountA: fromStroops(feeA),
-      feeAmountB: fromStroops(feeB),
-      feeWallet: feeA + feeB > 0n ? feeWallet : null,
-      tx,
-      timeoutSeconds: stellarCfg.timeoutSeconds,
+      return op;
     });
-    this.logger.log(
-      `Created LP withdraw ${op.id}: ${fromStroops(shares)} shares of pool ` +
-        `${dto.poolId.slice(0, 8)}… (consumer=${consumer.username}, network=${network})`,
-    );
-    return op;
   }
 
   // ── Read (operations) ───────────────────────────────────────────────────────
@@ -1033,6 +1049,38 @@ export class LiquidityPoolsService {
           `Insufficient ${s.asset.code} balance: need ${fromStroops(s.required)}, ` +
             `but the account holds ${fromStroops(bal)}`,
         );
+      }
+    }
+  }
+
+  /**
+   * Runs `fn` exclusively for this (consumer, source, pool) so a second
+   * withdraw cannot read remainingShares until the first has persisted PENDING.
+   */
+  private async withWithdrawLock<T>(
+    consumerId: string,
+    source: string,
+    poolId: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const key = `${consumerId}:${source}:${poolId}`;
+    const prev = this.withdrawLocks.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const held = prev.then(
+      () => gate,
+      () => gate,
+    );
+    this.withdrawLocks.set(key, held);
+    try {
+      await prev.catch(() => undefined);
+      return await fn();
+    } finally {
+      release();
+      if (this.withdrawLocks.get(key) === held) {
+        this.withdrawLocks.delete(key);
       }
     }
   }

@@ -965,6 +965,53 @@ describe('LiquidityPoolsService — issue #20 orchestration', () => {
       expect(second.feeWallet).toBeNull();
     });
 
+    it('does not double-charge when two withdraws of covered shares run concurrently', async () => {
+      seedCapturedDeposit();
+      stellar.loadAccount.mockResolvedValue(
+        mockHorizonAccount([
+          { asset_type: 'native', balance: '10000' },
+          {
+            asset_type: 'liquidity_pool_shares',
+            liquidity_pool_id: POOL_ID,
+            balance: '200',
+          },
+        ]),
+      );
+      stellar.fetchPool.mockResolvedValue(
+        poolRecord({
+          total_shares: '200',
+          reserves: [
+            { asset: 'native', amount: '4000' },
+            { asset: `USDC:${USDC_ISSUER}`, amount: '400' },
+          ],
+        }),
+      );
+
+      const [a, b] = await Promise.all([
+        service.withdraw(consumer, {
+          source: SOURCE,
+          poolId: POOL_ID,
+          shares: '100',
+          slippageBps: 0,
+        }),
+        service.withdraw(consumer, {
+          source: SOURCE,
+          poolId: POOL_ID,
+          shares: '100',
+          slippageBps: 0,
+        }),
+      ]);
+
+      const fees = [a, b].map((op) => ({
+        a: op.feeAmountA,
+        b: op.feeAmountB,
+      }));
+      const charged = fees.filter((f) => f.a !== '0' || f.b !== '0');
+      const free = fees.filter((f) => f.a === '0' && f.b === '0');
+      expect(charged).toHaveLength(1);
+      expect(free).toHaveLength(1);
+    });
+
     it('documents that an uncaptured deposit plus a later withdraw erodes remainingShares of other deposits (issue #20b)', async () => {
       // Horizon hiccup → captureDepositBasis leaves sharesReceived null.
       // costBasis skips that deposit, but a later SUCCEEDED withdraw still
@@ -1126,6 +1173,37 @@ describe('LiquidityPoolsService — issue #20 orchestration', () => {
       expect(result.data.map((p) => p.poolId).sort()).toEqual(
         [POOL_OK_1, POOL_OK_2].sort(),
       );
+    });
+
+    it('returns 503 when every pool fetch fails (Horizon outage)', async () => {
+      stellar.loadAccount.mockResolvedValue(
+        mockHorizonAccount([
+          { asset_type: 'native', balance: '10000' },
+          {
+            asset_type: 'liquidity_pool_shares',
+            liquidity_pool_id: POOL_OK_1,
+            balance: '10',
+          },
+          {
+            asset_type: 'liquidity_pool_shares',
+            liquidity_pool_id: POOL_OK_2,
+            balance: '30',
+          },
+        ]),
+      );
+      stellar.fetchPool.mockImplementation(() =>
+        Promise.reject(
+          Object.assign(new Error('Horizon 500'), {
+            response: { status: 500 },
+          }),
+        ),
+      );
+
+      const err = await service
+        .positions(consumer, { account: SOURCE })
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ServiceUnavailableException);
+      expect(err.getStatus()).toBe(503);
     });
   });
 });
