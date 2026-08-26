@@ -149,13 +149,15 @@ export class StellarVerifierService {
       server.payments().forTransaction(txHash).call(),
     );
 
+    // Keep the first destination-hit mismatch so multi-op txs return a stable
+    // reason (Horizon order must not flip asset vs amount messages).
     let mismatchReason: string | undefined;
     for (const op of payments.records) {
       const evaluated = this.evaluatePayment(intent, op);
       if (evaluated.ok) {
         return { valid: true, txHash, payer: evaluated.received.from };
       }
-      if (evaluated.reason) {
+      if (evaluated.reason && mismatchReason === undefined) {
         mismatchReason = evaluated.reason;
       }
     }
@@ -323,7 +325,9 @@ export class StellarVerifierService {
 
   /**
    * A payment to the right destination, in the intent's asset, for the exact
-   * amount. The amount check is skipped for open intents (no fixed amount).
+   * amount. The amount check is skipped for open intents (`amount == null`):
+   * any accepted op type (payment, path payment, create_account) that hits
+   * the destination in the right asset with a matching memo can credit.
    * When the op is aimed at the destination but asset/amount fail, `reason`
    * carries an actionable mismatch string for verifyByHash / observer logs.
    */

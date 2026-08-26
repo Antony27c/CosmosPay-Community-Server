@@ -123,6 +123,43 @@ describe('StellarVerifierService.verifyByHash', () => {
     expect(res.reason).toBe('amount mismatch (received 10, expected 25.5)');
   });
 
+  it('keeps the first destination mismatch reason, not the last', async () => {
+    mockHorizon({ successful: true, memo_type: 'id', memo: '123456789' }, [
+      {
+        type: 'payment',
+        asset_type: 'credit_alphanum4',
+        asset_code: 'USDC',
+        asset_issuer: 'GISSUER',
+        to: 'GDEST',
+        from: 'GPAYER',
+        amount: '25.5',
+      },
+      nativeTo('GDEST', '10'),
+    ]);
+    const res = await make().verifyByHash(intent, 'i'.repeat(64));
+    expect(res.valid).toBe(false);
+    expect(res.reason).toBe(
+      'asset mismatch (received USDC:GISSUER, expected native)',
+    );
+  });
+
+  it('open-amount intents accept path payment of any delivered amount', async () => {
+    const fixture = pathPaymentStrictReceiveFixture;
+    const openIntent: any = {
+      ...intent,
+      destination: fixture.to,
+      amount: null,
+      asset: fixture.asset_code,
+      assetIssuer: fixture.asset_issuer,
+    };
+    mockHorizon({ successful: true, memo_type: 'id', memo: '123456789' }, [
+      fixture,
+    ]);
+    const res = await make().verifyByHash(openIntent, fixture.transaction_hash);
+    expect(res.valid).toBe(true);
+    expect(res.payer).toBe(fixture.from);
+  });
+
   it('returns generic reason when no op targets the destination', async () => {
     mockHorizon({ successful: true, memo_type: 'id', memo: '123456789' }, [
       nativeTo('GOTHER', '25.5'),
