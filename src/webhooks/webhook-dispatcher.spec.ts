@@ -8,6 +8,8 @@ describe('WebhookDispatcherService', () => {
     id: 'we_1',
     url: 'https://integrator.example.com/hook',
     secret: 'whsec_test',
+    previousSecret: null as string | null,
+    previousSecretExpiresAt: null as Date | null,
     enabled: true,
     destinationBlocked: false,
     eventTypes: [] as string[],
@@ -23,13 +25,26 @@ describe('WebhookDispatcherService', () => {
     signatureHeader: 'x-cosmos-signature',
   };
 
-  function build(destinations?: WebhookDestinationGuard) {
+  function v1Tokens(header: string): string[] {
+    return header
+      .split(',')
+      .filter((part) => part.startsWith('v1='))
+      .map((part) => part.slice(3));
+  }
+
+  function headerTs(header: string): number {
+    return Number(header.split(',')[0].replace('t=', ''));
+  }
+
+  function build(
+    destinations?: WebhookDestinationGuard,
+    endpointOverride?: Partial<typeof endpoint>,
+  ) {
+    const ep = { ...endpoint, ...endpointOverride };
     const prisma = {
       webhookEndpoint: {
-        findMany: jest.fn().mockResolvedValue([endpoint]),
-        update: jest.fn(({ data }: any) =>
-          Promise.resolve({ ...endpoint, ...data }),
-        ),
+        findMany: jest.fn().mockResolvedValue([ep]),
+        update: jest.fn(({ data }: any) => Promise.resolve({ ...ep, ...data })),
       },
       webhookDelivery: {
         create: jest.fn(({ data }: any) =>
@@ -46,7 +61,7 @@ describe('WebhookDispatcherService', () => {
       guard.replaceDnsLookup(async () => ['93.184.216.34']);
     }
     const service = new WebhookDispatcherService(prisma as any, config, guard);
-    return { service, prisma, guard };
+    return { service, prisma, guard, endpoint: ep };
   }
 
   afterEach(() => jest.restoreAllMocks());
@@ -76,10 +91,10 @@ describe('WebhookDispatcherService', () => {
 
     // The signature header must be a valid HMAC of `${t}.${body}`.
     const header: string = init.headers['x-cosmos-signature'];
-    const [tPart, v1Part] = header.split(',');
-    const ts = Number(tPart.replace('t=', ''));
-    const v1 = v1Part.replace('v1=', '');
-    expect(signPayload(endpoint.secret, init.body, ts)).toBe(v1);
+    const ts = headerTs(header);
+    const tokens = v1Tokens(header);
+    expect(tokens).toHaveLength(1);
+    expect(signPayload(endpoint.secret, init.body, ts)).toBe(tokens[0]);
 
     // Integrator HTTP envelope is unchanged: { id, type, createdAt, data }.
     const body = JSON.parse(init.body);
@@ -204,5 +219,126 @@ describe('WebhookDispatcherService', () => {
     );
 
     expect(fetchMock.mock.calls[0][1].redirect).toBe('manual');
+  });
+
+  it('durante la gracia el header trae dos tokens v1 y el secreto viejo verifica OK', async () => {
+    const oldSecret = 'whsec_aaa';
+    const newSecret = 'whsec_bbb';
+    const { service } = build(undefined, {
+      secret: newSecret,
+      previousSecret: oldSecret,
+      previousSecretExpiresAt: new Date(Date.now() + 86_400_000),
+    });
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: null,
+    });
+    global.fetch = fetchMock as any;
+
+    await service.handleEvent(
+      new WebhookEventPayload('cosmos_u1', 'PAYMENT_INTENT_CREATED', {
+        id: 'pi_grace',
+      }),
+    );
+
+    const header: string =
+      fetchMock.mock.calls[0][1].headers['x-cosmos-signature'];
+    const ts = headerTs(header);
+    const body: string = fetchMock.mock.calls[0][1].body;
+    const tokens = v1Tokens(header);
+    expect(tokens).toHaveLength(2);
+    expect(tokens[0]).toBe(signPayload(newSecret, body, ts));
+    expect(tokens[1]).toBe(signPayload(oldSecret, body, ts));
+  });
+
+  it('pasada la gracia el secreto viejo ya no verifica', async () => {
+    const oldSecret = 'whsec_aaa';
+    const newSecret = 'whsec_bbb';
+    const { service } = build(undefined, {
+      secret: newSecret,
+      previousSecret: oldSecret,
+      previousSecretExpiresAt: new Date(Date.now() - 1000),
+    });
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: null,
+    });
+    global.fetch = fetchMock as any;
+
+    await service.handleEvent(
+      new WebhookEventPayload('cosmos_u1', 'PAYMENT_INTENT_CREATED', {
+        id: 'pi_expired_grace',
+      }),
+    );
+
+    const header: string =
+      fetchMock.mock.calls[0][1].headers['x-cosmos-signature'];
+    const ts = headerTs(header);
+    const body: string = fetchMock.mock.calls[0][1].body;
+    const tokens = v1Tokens(header);
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]).toBe(signPayload(newSecret, body, ts));
+    expect(tokens[0]).not.toBe(signPayload(oldSecret, body, ts));
+  });
+
+  it('graceSeconds=0 revoca al instante', async () => {
+    const oldSecret = 'whsec_aaa';
+    const newSecret = 'whsec_bbb';
+    const { service } = build(undefined, {
+      secret: newSecret,
+      previousSecret: null,
+      previousSecretExpiresAt: null,
+    });
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: null,
+    });
+    global.fetch = fetchMock as any;
+
+    await service.handleEvent(
+      new WebhookEventPayload('cosmos_u1', 'PAYMENT_INTENT_CREATED', {
+        id: 'pi_revoke',
+      }),
+    );
+
+    const header: string =
+      fetchMock.mock.calls[0][1].headers['x-cosmos-signature'];
+    const ts = headerTs(header);
+    const body: string = fetchMock.mock.calls[0][1].body;
+    const tokens = v1Tokens(header);
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]).toBe(signPayload(newSecret, body, ts));
+    expect(tokens[0]).not.toBe(signPayload(oldSecret, body, ts));
+  });
+
+  it('ping also signs with both secrets during the grace window', async () => {
+    const oldSecret = 'whsec_aaa';
+    const newSecret = 'whsec_bbb';
+    const { service, endpoint: ep } = build(undefined, {
+      secret: newSecret,
+      previousSecret: oldSecret,
+      previousSecretExpiresAt: new Date(Date.now() + 86_400_000),
+    });
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: null,
+    });
+    global.fetch = fetchMock as any;
+
+    const result = await service.pingEndpoint(ep as any);
+    expect(result.ok).toBe(true);
+
+    const header: string =
+      fetchMock.mock.calls[0][1].headers['x-cosmos-signature'];
+    const ts = headerTs(header);
+    const body: string = fetchMock.mock.calls[0][1].body;
+    const tokens = v1Tokens(header);
+    expect(tokens).toHaveLength(2);
+    expect(tokens[0]).toBe(signPayload(newSecret, body, ts));
+    expect(tokens[1]).toBe(signPayload(oldSecret, body, ts));
   });
 });

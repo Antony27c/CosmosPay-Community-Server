@@ -2,9 +2,27 @@
 
 All notable changes to the Cosmos Pay Community Server are documented here.
 Generated from [Conventional Commits](https://www.conventionalcommits.org) by [git-cliff](https://git-cliff.org).
+## [0.1.0] - 2026-08-25
+
+### Bug Fixes
+- Keep original secret on rapid re-rotation (c3dd3fc)
+
+## [0.0.11] - 2026-08-25
+
+### Features
+- Overlap signing secrets during rotation (73022f5)
+
+### Bug Fixes
+- Repair broken merge of watchdog and expiry safety (e6616dc)
+- Stop emitting unstable YAML anchors (61f7885)
+- Bound findMatchingPayment by time and persist Horizon cursor (387b129)
+- Restore settlement-observer after broken #56 merge (902ff0c)
+- Key Horizon cursor by intentId (8b58bd8)
+
 ## [0.0.10] - 2026-08-25
 
 ### Bug Fixes
+- Probe only the configured Horizon network (cce7d92)
 - Paginate list, fix OpenAPI shape, soft-delete by default (04ab33d)
 - Stabilize health YAML anchors for CI openapi:check (a11d529)
 - Stop expiring settlements on Horizon blips (576f428)
@@ -21,6 +39,7 @@ Generated from [Conventional Commits](https://www.conventionalcommits.org) by [g
 ## [0.0.8] - 2026-08-24
 
 ### Bug Fixes
+- Add Horizon timeout, retries, and observer watchdog (92b8413)
 - Add idempotency and unique txHash to prevent double SWAP_SUCCEEDED (4188907)
 - Recover same-key races and mark Idempotency-Key optional in OpenAPI (4778f27)
 - Unblock local receiver updates and KYC state transitions (91cb4f4)

@@ -69,7 +69,13 @@ describe('StellarObserverService.tick timeout', () => {
       },
     };
     const stellar = new StellarService(config);
-    const verifier = new StellarVerifierService(stellar);
+    const verifierPrisma = {
+      horizonAccountCursor: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        upsert: jest.fn().mockResolvedValue({}),
+      },
+    };
+    const verifier = new StellarVerifierService(stellar, verifierPrisma as any);
     const paymentIntents = {
       markExpired: jest.fn(),
       markSucceeded: jest.fn(),

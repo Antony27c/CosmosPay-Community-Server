@@ -12,7 +12,7 @@ import type {
   WebhookEventType,
 } from '../../generated/prisma/client';
 import { WEBHOOK_EVENT, WebhookEventPayload } from './webhook-events';
-import { buildSignatureHeader } from './webhook-signature';
+import { buildSignatureHeader, signingSecretsFor } from './webhook-signature';
 import { WebhookDestinationGuard } from './webhook-destination.guard';
 import { consumeResponseBody, webhookAbortSignal } from './webhook-http';
 import { WebhookUrlValidationError } from './webhook-url.validator';
@@ -151,7 +151,7 @@ export class WebhookDispatcherService {
             'content-type': 'application/json',
             'user-agent': 'CosmosPay-Webhooks/1.0',
             [signatureHeader]: buildSignatureHeader(
-              endpoint.secret,
+              signingSecretsFor(endpoint),
               body,
               Math.floor(Date.now() / 1000),
             ),
@@ -247,7 +247,7 @@ export class WebhookDispatcherService {
           'content-type': 'application/json',
           'user-agent': 'CosmosPay-Webhooks/1.0',
           [signatureHeader]: buildSignatureHeader(
-            endpoint.secret,
+            signingSecretsFor(endpoint),
             body,
             timestamp,
           ),

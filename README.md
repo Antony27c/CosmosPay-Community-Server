@@ -177,6 +177,7 @@ size.
 | `WEBHOOK_MAX_RESPONSE_BYTES` | `65536` | Cap on drained response body |
 | `WEBHOOK_TIMEOUT_MS` | `5000` | Legacy fallback if the split timeouts are unset |
 | `WEBHOOK_MAX_ATTEMPTS` / `WEBHOOK_BACKOFF_MS` | `3` / `2000` | Retry loop (unchanged) |
+| `WEBHOOK_SECRET_GRACE_SECONDS` | `86400` | Max overlap after `rotate-secret` (seconds). `graceSeconds=0` revokes immediately. |
 
 **Migrating existing endpoints:** after deploy, run
 
@@ -201,26 +202,101 @@ again and clears the flag), or re-enable after DNS is public.
 
 **Headers**:
 
-- `X-Cosmos-Signature: t=<unixSeconds>,v1=<hexHmacSha256>` — HMAC-SHA256 of
-  `${t}.${rawBody}` using the endpoint's `whsec_...` secret.
+- `X-Cosmos-Signature: t=<unixSeconds>,v1=<hexHmacSha256>[,v1=<hexHmacSha256>]`
+  — HMAC-SHA256 of `${t}.${rawBody}`. During a secret-rotation grace window the
+  header carries one `v1=` token per active secret (current, then previous); a
+  handler that still has the old secret keeps verifying OK. After the window
+  (or with `graceSeconds=0`) only the current secret is signed.
 - `X-Cosmos-Event`, `X-Cosmos-Event-Id`, `X-Cosmos-Delivery`.
 
 **Verifying the signature (integrator side):**
 
+Compare lengths **before** `timingSafeEqual` — a truncated or malformed header
+must return `false`, not throw `RangeError`. Reject timestamps older than five
+minutes to blunt replay. Iterate every `v1=` token so a delivery signed with
+both secrets during rotation still verifies with whichever secret you hold.
+
 ```ts
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
+const MAX_AGE_SECONDS = 300;
+
 function verify(rawBody: string, header: string, secret: string): boolean {
-  const [t, v1] = header.split(',').map((p) => p.split('=')[1]);
-  const expected = createHmac('sha256', secret).update(`${t}.${rawBody}`).digest('hex');
-  return timingSafeEqual(Buffer.from(expected), Buffer.from(v1));
+  if (!header || !rawBody || !secret) return false;
+
+  let timestamp: number | undefined;
+  const signatures: string[] = [];
+  for (const token of header.split(',')) {
+    const eq = token.indexOf('=');
+    if (eq === -1) continue;
+    const key = token.slice(0, eq);
+    const value = token.slice(eq + 1);
+    if (key === 't') timestamp = Number(value);
+    else if (key === 'v1' && value) signatures.push(value);
+  }
+
+  if (
+    timestamp == null ||
+    !Number.isFinite(timestamp) ||
+    signatures.length === 0
+  ) {
+    return false;
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  if (now - timestamp > MAX_AGE_SECONDS) return false;
+
+  const expected = Buffer.from(
+    createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex'),
+  );
+
+  for (const value of signatures) {
+    const candidate = Buffer.from(value);
+    if (
+      candidate.length === expected.length &&
+      timingSafeEqual(candidate, expected)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 ```
 
 The signing secret is returned **once** on `POST /webhooks` (and on
-`rotate-secret`); list/get responses never include it. Every attempt is stored
-(`webhook_delivery`) with status, attempts, response code and error — query it
-via `GET /webhooks/:id/deliveries` and re-send with the `redeliver` route.
+`rotate-secret`); list/get responses never include `secret` or `previousSecret`.
+They do include `previousSecretExpiresAt` so you can see how much overlap
+remains. Every attempt is stored (`webhook_delivery`) with status, attempts,
+response code and error — query it via `GET /webhooks/:id/deliveries` and
+re-send with the `redeliver` route.
+
+**Rotating the signing secret:**
+
+`POST /v1/webhooks/:id/rotate-secret` does **not** cut over in a single step.
+The current secret moves to an overlap window (default
+`WEBHOOK_SECRET_GRACE_SECONDS` = 24 hours; override per call with
+`{ "graceSeconds": N }` in the body, capped at that maximum):
+
+1. Call `POST /v1/webhooks/:id/rotate-secret`. The response includes the **new**
+   `secret` (`whsec_...`) and `previousSecretExpiresAt`. Store the new secret.
+2. Keep verifying with the **old** secret until you deploy the new one.
+   Deliveries during the window are signed with both: `t=…,v1=<new>,v1=<old>`.
+   Either secret verifies.
+3. Deploy the new secret to your handler. The snippet above already iterates
+   every `v1=` token, so you can switch at any point in the window.
+4. After `previousSecretExpiresAt`, deliveries carry a single `v1=` and the old
+   secret no longer verifies. The previous secret is then removed from the
+   database.
+
+Rotating again **before** `previousSecretExpiresAt` does not replace the
+original previous secret. The new current secret is issued, but deliveries keep
+the original `v1=` overlap until that first expiry. Pass `{ "graceSeconds": 0 }`
+if you need to drop every prior secret immediately.
+
+If the old secret is a **confirmed leak**, pass `{ "graceSeconds": 0 }`. The
+next delivery is signed only with the new secret; the old one is revoked
+immediately (no overlap). Use this when a teammate leaves, an audit requires
+it, or the secret appeared in a repo/log — not as the default rotation path.
 
 ### OpenAPI / Swagger
 
@@ -525,6 +601,7 @@ at least `DATABASE_URL` and `APISIX_GATEWAY_SECRET`.
 | `WEBHOOK_MAX_ATTEMPTS` | no | `3` | Delivery retry count |
 | `WEBHOOK_BACKOFF_MS` | no | `2000` | Linear backoff between retries (ms) |
 | `WEBHOOK_SIGNATURE_HEADER` | no | `x-cosmos-signature` | HMAC header sent to integrators |
+| `WEBHOOK_SECRET_GRACE_SECONDS` | no | `86400` | Max overlap after webhook `rotate-secret` (seconds) |
 | `SWAGGER_ENABLED` | no | off in `production` | Publish `/docs` (Express middleware, no guards) |
 | `OPENAPI_SERVER_URL` | no | — | Gateway host stamped into exported OpenAPI |
 | `BLINDPAY_API_KEY` | no | — | BlindPay platform API key |

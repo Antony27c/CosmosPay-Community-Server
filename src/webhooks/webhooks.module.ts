@@ -4,6 +4,7 @@ import { WebhooksService } from './webhooks.service';
 import { WebhookDispatcherService } from './webhook-dispatcher.service';
 import { WebhookDestinationGuard } from './webhook-destination.guard';
 import { WebhookTerminalEmitter } from './webhook-terminal-emitter.service';
+import { WebhookSecretCleanupService } from './webhook-secret-cleanup.service';
 
 @Global()
 @Module({
@@ -13,6 +14,7 @@ import { WebhookTerminalEmitter } from './webhook-terminal-emitter.service';
     WebhookDispatcherService,
     WebhookDestinationGuard,
     WebhookTerminalEmitter,
+    WebhookSecretCleanupService,
   ],
   // Terminal emitter is the single claim+emit path for observer and submit.
   exports: [WebhookDispatcherService, WebhookTerminalEmitter],

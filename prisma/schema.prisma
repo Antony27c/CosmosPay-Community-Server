@@ -162,6 +162,13 @@ model WebhookEndpoint {
   // HMAC-SHA256 signing secret (prefixed `whsec_`). Integrators verify the
   // `X-Cosmos-Signature` header with this.
   secret      String
+  // Previous signing secret, kept during the overlap window after a rotation so
+  // deliveries remain verifiable with either secret. Null when no rotation is
+  // in flight or the grace period has been cleaned up.
+  previousSecret String?
+  // Instant after which `previousSecret` must no longer be used for signing
+  // (and is nulled by the cleanup job). Null when there is no overlap.
+  previousSecretExpiresAt DateTime?
   description String?
   enabled     Boolean            @default(true)
   // Set when the URL fails public-destination checks (at register-time audit or
@@ -281,6 +288,8 @@ model PaymentIntent {
 
   // Append-only audit trail of status transitions (issue #36).
   transitions PaymentIntentTransition[]
+  // Optional Horizon resume cursor for observer matching (issue #27).
+  horizonCursor HorizonAccountCursor?
 
   @@unique([consumerId, memo]) // idempotency: one intent per (consumer, memo)
   @@index([consumerId])
@@ -307,6 +316,22 @@ model PaymentIntentTransition {
 
   @@index([intentId, createdAt])
   @@map("payment_intent_transition")
+}
+
+// Horizon paging cursor keyed by payment intent. Destination accounts are
+// shared across intents (disambiguated by memo), so a per-account cursor would
+// let one intent's scan consume another intent's matching payment (issue #27).
+model HorizonAccountCursor {
+  id          String        @id @default(cuid())
+  intentId    String        @unique
+  intent      PaymentIntent @relation(fields: [intentId], references: [id], onDelete: Cascade)
+  network     String // 'public' | 'testnet'
+  account     String // G... destination scanned
+  pagingToken String
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@map("horizon_account_cursor")
 }
 
 // ---------------------------------------------------------------------------
