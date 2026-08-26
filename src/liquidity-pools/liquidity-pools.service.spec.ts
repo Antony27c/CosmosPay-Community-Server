@@ -650,6 +650,7 @@ describe('LiquidityPoolsService — liquidated rows stay liquidated', () => {
 describe('LiquidityPoolsService — issue #20 orchestration', () => {
   let prisma: ReturnType<typeof createPrisma>;
   let stellar: ReturnType<typeof makeStellar>;
+  let events: { emit: jest.Mock };
   let service: LiquidityPoolsService;
 
   function buildService(feeWallet: string = FEE_WALLET) {
@@ -658,8 +659,8 @@ describe('LiquidityPoolsService — issue #20 orchestration', () => {
     const cfg = stellarConfig();
     cfg.swap.feeWallet = feeWallet;
     const config = { get: () => cfg } as any;
-    const events = { emit: jest.fn() } as any;
-    const webhooks = new WebhookTerminalEmitter(prisma, events);
+    events = { emit: jest.fn() };
+    const webhooks = new WebhookTerminalEmitter(prisma, events as any);
     service = new LiquidityPoolsService(
       config,
       prisma,
@@ -1055,6 +1056,62 @@ describe('LiquidityPoolsService — issue #20 orchestration', () => {
       expect(prisma.$executeRaw).toHaveBeenCalled();
       const sql = String(prisma.$executeRaw.mock.calls[0][0]);
       expect(sql).toContain('pg_advisory_xact_lock');
+    });
+
+    it('emits LIQUIDITY_CREATED and builds the QR after the withdraw transaction commits', async () => {
+      seedCapturedDeposit();
+      stellar.loadAccount.mockResolvedValue(
+        mockHorizonAccount([
+          { asset_type: 'native', balance: '10000' },
+          {
+            asset_type: 'liquidity_pool_shares',
+            liquidity_pool_id: POOL_ID,
+            balance: '200',
+          },
+        ]),
+      );
+      stellar.fetchPool.mockResolvedValue(
+        poolRecord({
+          total_shares: '200',
+          reserves: [
+            { asset: 'native', amount: '4000' },
+            { asset: `USDC:${USDC_ISSUER}`, amount: '400' },
+          ],
+        }),
+      );
+
+      const order: string[] = [];
+      prisma.$transaction.mockImplementation(async (arg: any) => {
+        if (typeof arg !== 'function') return Promise.all(arg);
+        const result = await arg({
+          $executeRaw: prisma.$executeRaw,
+          liquidityPoolOperation: prisma.liquidityPoolOperation,
+        });
+        order.push('commit');
+        return result;
+      });
+      events.emit.mockImplementation(() => {
+        order.push('emit');
+        return false;
+      });
+      const qr = jest.requireMock('qrcode').default.toDataURL as jest.Mock;
+      qr.mockImplementation(async () => {
+        order.push('qr');
+        return 'data:image/png;base64,qq';
+      });
+
+      try {
+        const op = await service.withdraw(consumer, {
+          source: SOURCE,
+          poolId: POOL_ID,
+          shares: '100',
+          slippageBps: 0,
+        });
+        expect(op.qr).toBe('data:image/png;base64,qq');
+        expect(order).toEqual(['commit', 'emit', 'qr']);
+      } finally {
+        qr.mockResolvedValue('data:image/png;base64,qq');
+      }
     });
 
     it('documents that an uncaptured deposit plus a later withdraw erodes remainingShares of other deposits (issue #20b)', async () => {

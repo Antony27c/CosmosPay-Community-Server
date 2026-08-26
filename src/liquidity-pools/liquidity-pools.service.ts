@@ -379,7 +379,7 @@ export class LiquidityPoolsService {
     if (memo) builder.addMemo(Memo.id(memo));
 
     const tx = builder.setTimeout(stellarCfg.timeoutSeconds).build();
-    const op = await this.persist(consumer, {
+    const op = await this.persist({
       consumerId: local.id,
       kind: 'DEPOSIT' as const,
       network,
@@ -408,7 +408,7 @@ export class LiquidityPoolsService {
         `${fromStroops(amountB)} ${this.label(b)} → pool ${poolId.slice(0, 8)}… ` +
         `(consumer=${consumer.username}, network=${network})`,
     );
-    return op;
+    return this.createdView(consumer.username, op);
   }
 
   // ── Withdraw ────────────────────────────────────────────────────────────────
@@ -474,7 +474,7 @@ export class LiquidityPoolsService {
     // Serialize costBasis → persist so two concurrent withdraws cannot both
     // observe the same remainingShares before either row is PENDING. The lock
     // is both in-process (Map) and cross-replica (pg_advisory_xact_lock).
-    return this.withWithdrawLock(
+    const created = await this.withWithdrawLock(
       local.id,
       dto.source,
       dto.poolId,
@@ -559,7 +559,6 @@ export class LiquidityPoolsService {
 
         const tx = builder.setTimeout(stellarCfg.timeoutSeconds).build();
         const op = await this.persist(
-          consumer,
           {
             consumerId: local.id,
             kind: 'WITHDRAW' as const,
@@ -592,6 +591,9 @@ export class LiquidityPoolsService {
         return op;
       },
     );
+    // Webhook + QR after commit: listeners must see the row, and a rollback
+    // must not have already dispatched LIQUIDITY_CREATED. QR is CPU-only.
+    return this.createdView(consumer.username, created);
   }
 
   // ── Read (operations) ───────────────────────────────────────────────────────
@@ -752,8 +754,8 @@ export class LiquidityPoolsService {
   }
 
   // ── Persistence ─────────────────────────────────────────────────────────────
+  /** Inserts the PENDING row. Callers emit + QR *after* the write is durable. */
   private async persist(
-    consumer: GatewayConsumer,
     input: {
       consumerId: string;
       kind: 'DEPOSIT' | 'WITHDRAW';
@@ -778,10 +780,10 @@ export class LiquidityPoolsService {
       timeoutSeconds: number;
     },
     db: LiquidityDb = this.prisma,
-  ): Promise<LiquidityOperationView> {
+  ): Promise<LiquidityPoolOperation> {
     const { tx, timeoutSeconds, ...data } = input;
     const xdr = tx.toXDR();
-    const op = await db.liquidityPoolOperation.create({
+    return db.liquidityPoolOperation.create({
       data: {
         ...data,
         status: 'PENDING',
@@ -792,7 +794,13 @@ export class LiquidityPoolsService {
         expiresAt: new Date(Date.now() + timeoutSeconds * 1000),
       },
     });
-    await this.emit(consumer.username, 'LIQUIDITY_CREATED', op);
+  }
+
+  private async createdView(
+    username: string,
+    op: LiquidityPoolOperation,
+  ): Promise<LiquidityOperationView> {
+    await this.emit(username, 'LIQUIDITY_CREATED', op);
     return this.withQr(op);
   }
 
