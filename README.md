@@ -149,8 +149,10 @@ dashboard query fast as volume grows.
 Each integrator (APISIX consumer) registers one or more webhook endpoints. When a
 payment intent changes, the platform fires a domain event; the **dispatcher**
 fans it out to every enabled endpoint of that consumer subscribed to the event
-type (empty subscription = all), records each attempt for traceability, and
-retries with linear backoff (`WEBHOOK_*` env).
+type (empty subscription = all), records a `webhook_delivery` row, and returns.
+A durable retry worker (`WebhookRetryWorkerService`) claims due rows from
+Postgres and POSTs with exponential backoff + jitter (`WEBHOOK_*` env), so a
+process restart cannot leave a notification stuck `PENDING`.
 
 Event types: `PAYMENT_INTENT_CREATED`, `PAYMENT_INTENT_UPDATED`,
 `PAYMENT_INTENT_SUCCEEDED`, `PAYMENT_INTENT_FAILED`, `PAYMENT_INTENT_CANCELLED`,
@@ -176,7 +178,10 @@ size.
 | `WEBHOOK_READ_TIMEOUT_MS` | `5000` | Read budget (part of AbortSignal timeout) |
 | `WEBHOOK_MAX_RESPONSE_BYTES` | `65536` | Cap on drained response body |
 | `WEBHOOK_TIMEOUT_MS` | `5000` | Legacy fallback if the split timeouts are unset |
-| `WEBHOOK_MAX_ATTEMPTS` / `WEBHOOK_BACKOFF_MS` | `3` / `2000` | Retry loop (unchanged) |
+| `WEBHOOK_MAX_ATTEMPTS` | `8` | Retry budget snapshotted onto each delivery |
+| `WEBHOOK_BACKOFF_MS` | `2000` | Base of exponential backoff between worker retries |
+| `WEBHOOK_MAX_BACKOFF_MS` | `3600000` | Ceiling for a single retry delay (1 hour) |
+| `WEBHOOK_SIGNATURE_HEADER` | `x-cosmos-signature` | HMAC header sent to integrators |
 | `WEBHOOK_SECRET_GRACE_SECONDS` | `86400` | Max overlap after `rotate-secret` (seconds). `graceSeconds=0` revokes immediately. |
 
 **Migrating existing endpoints:** after deploy, run
@@ -598,8 +603,9 @@ at least `DATABASE_URL` and `APISIX_GATEWAY_SECRET`.
 | `WEBHOOK_CONNECT_TIMEOUT_MS` | no | `3000` | Outbound webhook connect budget (ms) |
 | `WEBHOOK_READ_TIMEOUT_MS` | no | `5000` | Outbound webhook read budget (ms) |
 | `WEBHOOK_MAX_RESPONSE_BYTES` | no | `65536` | Max drained webhook response body |
-| `WEBHOOK_MAX_ATTEMPTS` | no | `3` | Delivery retry count |
-| `WEBHOOK_BACKOFF_MS` | no | `2000` | Linear backoff between retries (ms) |
+| `WEBHOOK_MAX_ATTEMPTS` | no | `8` | Delivery retry budget (snapshotted at enqueue) |
+| `WEBHOOK_BACKOFF_MS` | no | `2000` | Base of exponential backoff between retries (ms) |
+| `WEBHOOK_MAX_BACKOFF_MS` | no | `3600000` | Max retry delay (ms) |
 | `WEBHOOK_SIGNATURE_HEADER` | no | `x-cosmos-signature` | HMAC header sent to integrators |
 | `WEBHOOK_SECRET_GRACE_SECONDS` | no | `86400` | Max overlap after webhook `rotate-secret` (seconds) |
 | `SWAGGER_ENABLED` | no | off in `production` | Publish `/docs` (Express middleware, no guards) |

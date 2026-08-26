@@ -112,11 +112,23 @@ export interface AppConfig {
     maxResponseBytes: number;
     maxAttempts: number;
     backoffMs: number;
+    /** Ceiling for exponential retry delay (ms). */
+    maxBackoffMs: number;
     signatureHeader: string;
     // Max overlap (seconds) after rotate-secret during which deliveries are
     // signed with both the new and previous secrets. Callers may request a
     // shorter window; 0 revokes the previous secret immediately.
     secretGraceSeconds: number;
+    /** Retry-worker poll interval (ms). */
+    workerIntervalMs: number;
+    /** Max due deliveries claimed per worker tick. */
+    workerBatchSize: number;
+    /** Exclusive claim duration so a dead replica's row is reclaimed (ms). */
+    leaseMs: number;
+    /** Max in-flight enqueue / delivery POSTs per fan-out or worker tick. */
+    fanoutConcurrency: number;
+    /** Consecutive exhausted deliveries after which the endpoint is paused. */
+    pauseAfterFailures: number;
   };
   blindpay: {
     // BlindPay is the fiat<->stablecoin rails provider powering onramp/offramp/KYC.
@@ -264,13 +276,31 @@ export default (): AppConfig => ({
       process.env.WEBHOOK_MAX_RESPONSE_BYTES ?? '65536',
       10,
     ),
-    maxAttempts: parseInt(process.env.WEBHOOK_MAX_ATTEMPTS ?? '3', 10),
+    maxAttempts: parseInt(process.env.WEBHOOK_MAX_ATTEMPTS ?? '8', 10),
     backoffMs: parseInt(process.env.WEBHOOK_BACKOFF_MS ?? '2000', 10),
+    maxBackoffMs: parseInt(process.env.WEBHOOK_MAX_BACKOFF_MS ?? '3600000', 10),
     signatureHeader: (
       process.env.WEBHOOK_SIGNATURE_HEADER ?? 'x-cosmos-signature'
     ).toLowerCase(),
     secretGraceSeconds: parseInt(
       process.env.WEBHOOK_SECRET_GRACE_SECONDS ?? '86400',
+      10,
+    ),
+    workerIntervalMs: parseInt(
+      process.env.WEBHOOK_WORKER_INTERVAL_MS ?? '1000',
+      10,
+    ),
+    workerBatchSize: parseInt(
+      process.env.WEBHOOK_WORKER_BATCH_SIZE ?? '50',
+      10,
+    ),
+    leaseMs: parseInt(process.env.WEBHOOK_LEASE_MS ?? '30000', 10),
+    fanoutConcurrency: parseInt(
+      process.env.WEBHOOK_FANOUT_CONCURRENCY ?? '5',
+      10,
+    ),
+    pauseAfterFailures: parseInt(
+      process.env.WEBHOOK_PAUSE_AFTER_FAILURES ?? '5',
       10,
     ),
   },

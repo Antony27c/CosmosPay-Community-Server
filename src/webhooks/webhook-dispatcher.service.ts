@@ -2,7 +2,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { OnEvent } from '@nestjs/event-emitter';
 import { randomUUID } from 'node:crypto';
-import { setTimeout as sleep } from 'node:timers/promises';
 import { AppConfig } from '../config/configuration';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
@@ -16,6 +15,17 @@ import { buildSignatureHeader, signingSecretsFor } from './webhook-signature';
 import { WebhookDestinationGuard } from './webhook-destination.guard';
 import { consumeResponseBody, webhookAbortSignal } from './webhook-http';
 import { WebhookUrlValidationError } from './webhook-url.validator';
+import { mapWithConcurrency } from './map-with-concurrency';
+
+/** Result of a single signed POST to the integrator. Retry policy lives in the worker. */
+export type WebhookAttemptResult =
+  | { ok: true; responseStatus: number; error: null; fatal: false }
+  | {
+      ok: false;
+      responseStatus: number | null;
+      error: string;
+      fatal: boolean;
+    };
 
 @Injectable()
 export class WebhookDispatcherService {
@@ -30,7 +40,8 @@ export class WebhookDispatcherService {
   /**
    * Fans out a domain event to every enabled endpoint of the owning consumer
    * that is subscribed to the event type (empty subscription list = all).
-   * Runs out-of-band (async) so it never blocks the request that emitted it.
+   * Enqueues a delivery row per target and returns — the retry worker owns
+   * the HTTP attempt so a restart cannot strand a PENDING row.
    */
   @OnEvent(WEBHOOK_EVENT, { async: true, promisify: true })
   async handleEvent(payload: WebhookEventPayload): Promise<void> {
@@ -55,38 +66,53 @@ export class WebhookDispatcherService {
       `Dispatching ${payload.type} (${eventId}) to ${targets.length} endpoint(s) for ${payload.consumerUsername}`,
     );
 
-    await Promise.all(
-      targets.map((endpoint) =>
-        this.createAndDeliver(endpoint, payload.type, eventId, payload.data),
-      ),
-    );
+    const { fanoutConcurrency } = this.config.get('webhooks', { infer: true });
+    try {
+      await mapWithConcurrency(targets, fanoutConcurrency, async (endpoint) => {
+        try {
+          await this.enqueue(endpoint, payload.type, eventId, payload.data);
+        } catch (err) {
+          this.logger.error(
+            `Failed to enqueue ${payload.type} for endpoint ${endpoint.id}: ${
+              err instanceof Error ? err.message : err
+            }`,
+          );
+        }
+      });
+    } catch (err) {
+      this.logger.error(
+        `Webhook fan-out failed for ${payload.type} (${eventId})`,
+        err as Error,
+      );
+    }
   }
 
-  /** Creates a delivery record then attempts to send it. */
-  private async createAndDeliver(
+  /** Persists a PENDING delivery for the retry worker. Does not call the integrator. */
+  private async enqueue(
     endpoint: WebhookEndpoint,
     eventType: WebhookEventType,
     eventId: string,
     data: unknown,
-  ): Promise<void> {
+  ): Promise<WebhookDelivery> {
+    const { maxAttempts } = this.config.get('webhooks', { infer: true });
     const body = this.buildBody(eventId, eventType, data);
 
-    const delivery = await this.prisma.webhookDelivery.create({
+    return this.prisma.webhookDelivery.create({
       data: {
         endpointId: endpoint.id,
         eventType,
         eventId,
         payload: body as Prisma.InputJsonValue,
         status: 'PENDING',
+        nextAttemptAt: new Date(),
+        maxAttempts,
       },
     });
-
-    await this.attempt(endpoint, delivery);
   }
 
   /**
-   * Re-sends an existing delivery (manual redelivery / retry). Returns the
-   * updated record. Throws if the endpoint is gone.
+   * Re-queues an existing delivery for the worker (manual redelivery).
+   * Returns the updated record without waiting on the integrator.
    */
   async redeliver(delivery: WebhookDelivery): Promise<WebhookDelivery> {
     const endpoint = await this.prisma.webhookEndpoint.findUnique({
@@ -95,17 +121,29 @@ export class WebhookDispatcherService {
     if (!endpoint) {
       throw new Error(`Endpoint ${delivery.endpointId} no longer exists`);
     }
-    return this.attempt(endpoint, delivery);
+    const { maxAttempts } = this.config.get('webhooks', { infer: true });
+    return this.prisma.webhookDelivery.update({
+      where: { id: delivery.id },
+      data: {
+        status: 'PENDING',
+        nextAttemptAt: new Date(),
+        leaseUntil: null,
+        error: null,
+        attempts: 0,
+        maxAttempts,
+      },
+    });
   }
 
-  /** The retry loop: POSTs the signed payload until success or attempts run out. */
-  private async attempt(
+  /**
+   * One signed POST. Does not persist status — the worker decides retry vs fail.
+   * `fatal` means do not retry (SSRF / destination blocked).
+   */
+  async attemptOnce(
     endpoint: WebhookEndpoint,
     delivery: WebhookDelivery,
-  ): Promise<WebhookDelivery> {
+  ): Promise<WebhookAttemptResult> {
     const {
-      maxAttempts,
-      backoffMs,
       connectTimeoutMs,
       readTimeoutMs,
       maxResponseBytes,
@@ -113,90 +151,70 @@ export class WebhookDispatcherService {
     } = this.config.get('webhooks', { infer: true });
 
     const body = JSON.stringify(delivery.payload);
-    let attempts = delivery.attempts;
-    let lastError: string | null = null;
-    let responseStatus: number | null = null;
 
-    for (let i = 0; i < maxAttempts; i++) {
-      attempts += 1;
-
-      try {
-        await this.destinations.assertSafe(endpoint.url);
-      } catch (err) {
-        lastError =
-          err instanceof WebhookUrlValidationError
+    try {
+      await this.destinations.assertSafe(endpoint.url);
+    } catch (err) {
+      const error =
+        err instanceof WebhookUrlValidationError
+          ? err.message
+          : err instanceof Error
             ? err.message
-            : err instanceof Error
-              ? err.message
-              : 'Destination validation failed';
-        responseStatus = null;
-        await this.markDestinationBlocked(endpoint.id, lastError);
-        // Do not retry SSRF / destination failures — DNS will not become safe
-        // by waiting, and we must not open a connection.
-        break;
-      }
-
-      const signal = webhookAbortSignal({
-        connectTimeoutMs,
-        readTimeoutMs,
-      });
-
-      try {
-        const res = await fetch(endpoint.url, {
-          method: 'POST',
-          // Never follow 3xx — webhook receivers must be the registered URL.
-          redirect: 'manual',
-          signal,
-          headers: {
-            'content-type': 'application/json',
-            'user-agent': 'CosmosPay-Webhooks/1.0',
-            [signatureHeader]: buildSignatureHeader(
-              signingSecretsFor(endpoint),
-              body,
-              Math.floor(Date.now() / 1000),
-            ),
-            'x-cosmos-event': delivery.eventType,
-            'x-cosmos-event-id': delivery.eventId,
-            'x-cosmos-delivery': delivery.id,
-          },
-          body,
-        });
-        responseStatus = res.status;
-
-        await consumeResponseBody(res, maxResponseBytes);
-
-        if (res.ok) {
-          return this.finalize(
-            delivery.id,
-            'SUCCEEDED',
-            attempts,
-            res.status,
-            null,
-          );
-        }
-        lastError = `Non-2xx response: ${res.status}`;
-      } catch (err) {
-        lastError =
-          err instanceof Error ? err.message : 'Unknown delivery error';
-        responseStatus = null;
-      }
-
-      // Linear backoff before the next attempt (skip after the last one).
-      if (i < maxAttempts - 1) {
-        await sleep(backoffMs * (i + 1));
-      }
+            : 'Destination validation failed';
+      await this.markDestinationBlocked(endpoint.id, error);
+      return { ok: false, responseStatus: null, error, fatal: true };
     }
 
-    this.logger.warn(
-      `Delivery ${delivery.id} to ${endpoint.url} failed after ${attempts} attempt(s): ${lastError}`,
-    );
-    return this.finalize(
-      delivery.id,
-      'FAILED',
-      attempts,
-      responseStatus,
-      lastError,
-    );
+    const signal = webhookAbortSignal({
+      connectTimeoutMs,
+      readTimeoutMs,
+    });
+
+    try {
+      const res = await fetch(endpoint.url, {
+        method: 'POST',
+        // Never follow 3xx — webhook receivers must be the registered URL.
+        redirect: 'manual',
+        signal,
+        headers: {
+          'content-type': 'application/json',
+          'user-agent': 'CosmosPay-Webhooks/1.0',
+          [signatureHeader]: buildSignatureHeader(
+            signingSecretsFor(endpoint),
+            body,
+            Math.floor(Date.now() / 1000),
+          ),
+          'x-cosmos-event': delivery.eventType,
+          'x-cosmos-event-id': delivery.eventId,
+          'x-cosmos-delivery': delivery.id,
+        },
+        body,
+      });
+
+      await consumeResponseBody(res, maxResponseBytes);
+
+      if (res.ok) {
+        return {
+          ok: true,
+          responseStatus: res.status,
+          error: null,
+          fatal: false,
+        };
+      }
+      return {
+        ok: false,
+        responseStatus: res.status,
+        error: `Non-2xx response: ${res.status}`,
+        fatal: false,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        responseStatus: null,
+        error: err instanceof Error ? err.message : 'Unknown delivery error',
+        fatal: false,
+      };
+    }
   }
 
   /**
@@ -278,25 +296,6 @@ export class WebhookDispatcherService {
       data: {
         destinationBlocked: true,
         enabled: false,
-      },
-    });
-  }
-
-  private finalize(
-    id: string,
-    status: 'SUCCEEDED' | 'FAILED',
-    attempts: number,
-    responseStatus: number | null,
-    error: string | null,
-  ): Promise<WebhookDelivery> {
-    return this.prisma.webhookDelivery.update({
-      where: { id },
-      data: {
-        status,
-        attempts,
-        responseStatus,
-        error,
-        lastAttemptAt: new Date(),
       },
     });
   }

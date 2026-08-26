@@ -147,6 +147,7 @@ enum WebhookEventType {
 
 enum WebhookDeliveryStatus {
   PENDING
+  RETRYING
   SUCCEEDED
   FAILED
 }
@@ -201,16 +202,24 @@ model WebhookDelivery {
   payload        Json
   status         WebhookDeliveryStatus @default(PENDING)
   attempts       Int                   @default(0)
+  // Snapshot of the retry budget at enqueue time so a later env change does
+  // not shrink or expand an in-flight delivery.
+  maxAttempts    Int                   @default(8)
   responseStatus Int?
   error          String?
   lastAttemptAt  DateTime?
+  // When the retry worker may pick this row up. Null once terminal.
+  nextAttemptAt  DateTime?
+  // Exclusive claim: a replica owns the row until this instant. Null / expired
+  // means the row is free. Survives process death — another replica resumes.
+  leaseUntil     DateTime?
 
   createdAt      DateTime              @default(now())
   updatedAt      DateTime              @updatedAt
 
   @@index([endpointId])
-  @@index([status])
   @@index([eventId])
+  @@index([status, nextAttemptAt])
   @@map("webhook_delivery")
 }
 

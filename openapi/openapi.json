@@ -1287,6 +1287,7 @@
               "type": "string",
               "enum": [
                 "PENDING",
+                "RETRYING",
                 "SUCCEEDED",
                 "FAILED"
               ]
@@ -4965,6 +4966,7 @@
             "type": "string",
             "enum": [
               "PENDING",
+              "RETRYING",
               "SUCCEEDED",
               "FAILED"
             ],
@@ -4973,6 +4975,11 @@
           "attempts": {
             "type": "number",
             "example": 1
+          },
+          "maxAttempts": {
+            "type": "number",
+            "example": 8,
+            "description": "Retry budget snapshotted at enqueue."
           },
           "responseStatus": {
             "type": "object",
@@ -4988,6 +4995,18 @@
             "type": "object",
             "nullable": true,
             "example": "2026-06-21T12:34:57.000Z"
+          },
+          "nextAttemptAt": {
+            "type": "object",
+            "nullable": true,
+            "example": "2026-06-21T12:35:01.000Z",
+            "description": "When the retry worker may attempt this delivery next."
+          },
+          "leaseUntil": {
+            "type": "object",
+            "nullable": true,
+            "example": null,
+            "description": "Exclusive claim held by a worker replica until this instant."
           },
           "createdAt": {
             "format": "date-time",
@@ -5008,9 +5027,12 @@
           "payload",
           "status",
           "attempts",
+          "maxAttempts",
           "responseStatus",
           "error",
           "lastAttemptAt",
+          "nextAttemptAt",
+          "leaseUntil",
           "createdAt",
           "updatedAt"
         ]

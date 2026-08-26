@@ -222,6 +222,11 @@ class EnvironmentVariables {
   WEBHOOK_BACKOFF_MS?: number;
 
   @IsOptional()
+  @IsInt()
+  @Min(0)
+  WEBHOOK_MAX_BACKOFF_MS?: number;
+
+  @IsOptional()
   @IsString()
   WEBHOOK_SIGNATURE_HEADER?: string;
 
@@ -229,6 +234,31 @@ class EnvironmentVariables {
   @IsInt()
   @Min(0)
   WEBHOOK_SECRET_GRACE_SECONDS?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  WEBHOOK_WORKER_INTERVAL_MS?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  WEBHOOK_WORKER_BATCH_SIZE?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  WEBHOOK_LEASE_MS?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  WEBHOOK_FANOUT_CONCURRENCY?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  WEBHOOK_PAUSE_AFTER_FAILURES?: number;
 
   // --- OpenAPI / Swagger ---
   @IsOptional()

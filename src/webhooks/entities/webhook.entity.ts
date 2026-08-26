@@ -90,6 +90,12 @@ export class WebhookDeliveryEntity {
   @ApiProperty({ example: 1 })
   attempts!: number;
 
+  @ApiProperty({
+    example: 8,
+    description: 'Retry budget snapshotted at enqueue.',
+  })
+  maxAttempts!: number;
+
   @ApiProperty({ nullable: true, example: 200 })
   responseStatus!: number | null;
 
@@ -98,6 +104,20 @@ export class WebhookDeliveryEntity {
 
   @ApiProperty({ nullable: true, example: '2026-06-21T12:34:57.000Z' })
   lastAttemptAt!: Date | null;
+
+  @ApiProperty({
+    nullable: true,
+    example: '2026-06-21T12:35:01.000Z',
+    description: 'When the retry worker may attempt this delivery next.',
+  })
+  nextAttemptAt!: Date | null;
+
+  @ApiProperty({
+    nullable: true,
+    example: null,
+    description: 'Exclusive claim held by a worker replica until this instant.',
+  })
+  leaseUntil!: Date | null;
 
   @ApiProperty({ example: '2026-06-21T12:34:56.000Z' })
   createdAt!: Date;

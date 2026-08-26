@@ -82,6 +82,12 @@ describe('Webhooks CRUD (e2e)', () => {
     webhookDelivery: {
       findMany: jest.fn().mockResolvedValue([]),
       count: jest.fn().mockResolvedValue(0),
+      create: jest.fn().mockResolvedValue({ id: 'wd_1' }),
+      update: jest.fn(({ where, data }: any) =>
+        Promise.resolve({ id: where?.id ?? 'wd_1', ...data }),
+      ),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      findFirst: jest.fn().mockResolvedValue(null),
     },
   };
 
@@ -239,7 +245,9 @@ describe('Webhooks CRUD (e2e)', () => {
     await gw(request(http()).post(`${route}/${id}/rotate-secret`)).expect(201);
     expect(store.get(id).secret).not.toBe(intermediate);
     expect(store.get(id).previousSecret).toBe(originalPrevious);
-    expect(store.get(id).previousSecretExpiresAt.getTime()).toBe(originalExpiry);
+    expect(store.get(id).previousSecretExpiresAt.getTime()).toBe(
+      originalExpiry,
+    );
   });
 
   it('rejects graceSeconds above the configured maximum (400)', async () => {

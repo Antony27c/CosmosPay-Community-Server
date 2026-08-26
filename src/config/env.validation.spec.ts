@@ -188,6 +188,13 @@ describe('validateEnv', () => {
       );
     });
 
+    it('rejects WEBHOOK_MAX_BACKOFF_MS=abc', () => {
+      expectEnvError(
+        validEnv({ WEBHOOK_MAX_BACKOFF_MS: 'abc' }),
+        'WEBHOOK_MAX_BACKOFF_MS',
+      );
+    });
+
     it('rejects WEBHOOK_SECRET_GRACE_SECONDS=abc', () => {
       expectEnvError(
         validEnv({ WEBHOOK_SECRET_GRACE_SECONDS: 'abc' }),
