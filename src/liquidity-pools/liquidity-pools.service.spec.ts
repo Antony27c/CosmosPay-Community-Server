@@ -155,7 +155,17 @@ function createPrisma(seed: any[] = []) {
       }),
     },
     webhookEmittedEvent: uniqueEmittedEvents(),
+    $executeRaw: jest.fn(async () => 0),
   };
+  prisma.$transaction = jest.fn(async (arg: any) => {
+    if (typeof arg === 'function') {
+      return arg({
+        $executeRaw: prisma.$executeRaw,
+        liquidityPoolOperation: prisma.liquidityPoolOperation,
+      });
+    }
+    return Promise.all(arg);
+  });
   return prisma;
 }
 
@@ -1010,6 +1020,41 @@ describe('LiquidityPoolsService — issue #20 orchestration', () => {
       const free = fees.filter((f) => f.a === '0' && f.b === '0');
       expect(charged).toHaveLength(1);
       expect(free).toHaveLength(1);
+    });
+
+    it('takes a postgres advisory lock around costBasis and persist', async () => {
+      seedCapturedDeposit();
+      stellar.loadAccount.mockResolvedValue(
+        mockHorizonAccount([
+          { asset_type: 'native', balance: '10000' },
+          {
+            asset_type: 'liquidity_pool_shares',
+            liquidity_pool_id: POOL_ID,
+            balance: '200',
+          },
+        ]),
+      );
+      stellar.fetchPool.mockResolvedValue(
+        poolRecord({
+          total_shares: '200',
+          reserves: [
+            { asset: 'native', amount: '4000' },
+            { asset: `USDC:${USDC_ISSUER}`, amount: '400' },
+          ],
+        }),
+      );
+
+      await service.withdraw(consumer, {
+        source: SOURCE,
+        poolId: POOL_ID,
+        shares: '100',
+        slippageBps: 0,
+      });
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+      expect(prisma.$executeRaw).toHaveBeenCalled();
+      const sql = String(prisma.$executeRaw.mock.calls[0][0]);
+      expect(sql).toContain('pg_advisory_xact_lock');
     });
 
     it('documents that an uncaptured deposit plus a later withdraw erodes remainingShares of other deposits (issue #20b)', async () => {
