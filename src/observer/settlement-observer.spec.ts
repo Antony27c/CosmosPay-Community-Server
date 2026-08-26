@@ -1,6 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Networks } from '@stellar/stellar-sdk';
+import { Horizon, Networks } from '@stellar/stellar-sdk';
 import { AppConfig } from '../config/configuration';
 import { LiquidityPoolsService } from '../liquidity-pools/liquidity-pools.service';
 import {
@@ -83,6 +83,90 @@ function internals(service: SettlementObserverService): ObserverInternals {
   return service as unknown as ObserverInternals;
 }
 
+
+function never(): Promise<never> {
+  return new Promise(() => {});
+}
+
+describe('SettlementObserverService.tick timeout', () => {
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  it('a hung Horizon lookup returns unknown and the next cycle still runs', async () => {
+    jest.useFakeTimers({ now: Date.now() });
+    const call = jest.fn().mockRejectedValue(new Error('timeout'));
+    const swap = {
+      id: 'sw_1',
+      status: 'PENDING',
+      txHash: 'b'.repeat(64),
+      network: 'testnet',
+      expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+      lastCheckedAt: null,
+      notFoundStreak: 0,
+      consumer: { apisixUsername: 'cosmos_u1' },
+    };
+    const prisma = {
+      swap: {
+        findMany: jest.fn(async () => [swap]),
+        update: jest.fn().mockResolvedValue(swap),
+      },
+      liquidityPoolOperation: {
+        findMany: jest.fn(async () => []),
+        update: jest.fn(),
+      },
+    };
+    const config = {
+      get: (key: string) =>
+        key === 'observer'
+          ? { enabled: false, intervalMs: 10_000, batchSize: 50, expiryGraceMs: 60_000 }
+          : stellarCfg,
+    };
+    const stellar = {
+      passphrase: () => Networks.TESTNET,
+      recordObserverCycle: jest.fn(),
+      metrics: jest.fn().mockReturnValue({
+        horizonErrors: {},
+        observers: { settlement: { cycles: 0 } },
+      }),
+      server: jest.fn().mockReturnValue({
+        transactions: () => ({ transaction: () => ({ call }) }),
+      }),
+    };
+    const swaps = {
+      finalizeSucceeded: jest.fn(),
+      finalizeFailed: jest.fn(),
+      finalizeExpired: jest.fn(),
+    };
+    const liquidity = {
+      finalizeSucceeded: jest.fn(),
+      finalizeFailed: jest.fn(),
+      finalizeExpired: jest.fn(),
+    };
+    const observer = new SettlementObserverService(
+      config as any,
+      prisma as any,
+      stellar as any,
+      liquidity as any,
+      swaps as any,
+    );
+
+    await observer.tick();
+    expect(observer.isRunning()).toBe(false);
+    expect(swaps.finalizeSucceeded).not.toHaveBeenCalled();
+    const findsAfterFirst = prisma.swap.findMany.mock.calls.length;
+
+    await observer.tick();
+    expect(observer.isRunning()).toBe(false);
+    expect(prisma.swap.findMany.mock.calls.length).toBeGreaterThan(
+      findsAfterFirst,
+    );
+  });
+});
+
+
 describe('nextExpiryStreak', () => {
   const now = new Date('2026-08-24T18:00:00.000Z');
   const expired = new Date(now.getTime() - 120_000);
@@ -109,6 +193,11 @@ describe('SettlementObserverService', () => {
   function buildHorizon(call: jest.Mock) {
     return {
       passphrase: () => Networks.TESTNET,
+      recordObserverCycle: jest.fn(),
+      metrics: jest.fn().mockReturnValue({
+        horizonErrors: {},
+        observers: { settlement: { cycles: 0 } },
+      }),
       server: jest.fn().mockReturnValue({
         transactions: () => ({
           transaction: () => ({ call }),

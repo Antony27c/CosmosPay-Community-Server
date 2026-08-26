@@ -76,6 +76,8 @@ export class SettlementObserverService
     if (this.running) return; // never overlap cycles
     this.running = true;
     try {
+      reconciled += await this.reconcileSwaps(batchSize);
+      reconciled += await this.reconcileLiquidity(batchSize);
       const { batchSize } = this.config.get('observer', { infer: true });
       await this.reconcileSwaps(batchSize);
       await this.reconcileLiquidity(batchSize);
@@ -250,6 +252,7 @@ export class SettlementObserverService
         }
       }
     }
+    return reconciled;
   }
 
   /**
